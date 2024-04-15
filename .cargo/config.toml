@@ -1,0 +1,8 @@
+[target.i686-unknown-linux-gnu]
+rustflags = ["-C", "linker=clang"]
+
+linker = "i686-elf-ld"
+
+[unstable]
+build-std-features = ["compiler-builtins-mem"]
+build-std = ["core", "compiler_builtins"]
