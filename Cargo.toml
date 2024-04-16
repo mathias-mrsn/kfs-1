@@ -1,11 +1,11 @@
 [package]
-name = "{KERNEL_NAME}"
+name = "_KERNEL_NAME_"
 version = "0.1.0"
 authors = ["MAURAISIN Mathias <mamaurai@student.42.fr>"]
 edition = "2021"
 
 [lib]
-name = "{KERNEL_NAME}"
+name = "_KERNEL_NAME_"
 path = "src/main.rs"
 crate-type = ["staticlib"]
 

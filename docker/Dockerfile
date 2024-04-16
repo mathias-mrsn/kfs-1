@@ -21,7 +21,7 @@ RUN rustup default nightly && \
     rustup component add rust-src --toolchain nightly-x86_64-unknown-linux-gnu
 
 # Rename kernel name
-RUN sed -i "s/{KERNEL_NAME}/${KERNEL_NAME}/g" \
+RUN sed -i "s/_KERNEL_NAME_/${KERNEL_NAME}/g" \
       ${KERNELDIR}/arch/i386/grub/grub.cfg \
       ${KERNELDIR}/Cargo.toml
 

@@ -3,5 +3,5 @@
 version = 3
 
 [[package]]
-name = "kfs"
+name = "_KERNEL_NAME_"
 version = "0.1.0"
