@@ -11,17 +11,8 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="82cb1f19-0ae1-4a23-a87e-f960de537e1b" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.cargo/config.toml" beforeDir="false" afterPath="$PROJECT_DIR$/.cargo/config.toml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.logs/build.log" beforeDir="false" afterPath="$PROJECT_DIR$/.logs/build.log" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.logs/create.log" beforeDir="false" afterPath="$PROJECT_DIR$/.logs/create.log" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Cargo.lock" beforeDir="false" afterPath="$PROJECT_DIR$/Cargo.lock" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/Cargo.toml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/arch/i386/grub/grub.cfg" beforeDir="false" afterPath="$PROJECT_DIR$/arch/i386/grub/grub.cfg" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docker/Dockerfile" beforeDir="false" afterPath="$PROJECT_DIR$/docker/Dockerfile" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/output/kfs1.bin" beforeDir="false" afterPath="$PROJECT_DIR$/output/kfs1.bin" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/output/kfs1.iso" beforeDir="false" afterPath="$PROJECT_DIR$/output/kfs1.iso" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/drivers/vga/mod.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/drivers/vga/mod.rs" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/main.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/main.rs" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -50,6 +41,10 @@
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "RunOnceActivity.rust.reset.selective.auto.import": "true",
     "git-widget-placeholder": "master",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
     "nodejs_package_manager_path": "npm",
     "org.rust.cargo.project.model.PROJECT_DISCOVERY": "true",
     "org.rust.cargo.project.model.impl.CargoExternalSystemProjectAware.subscribe.first.balloon": "",
@@ -107,6 +102,7 @@
       <updated>1710254797265</updated>
       <workItem from="1710254798692" duration="102000" />
       <workItem from="1713289101898" duration="44000" />
+      <workItem from="1713815857643" duration="1591000" />
     </task>
     <servers />
   </component>

@@ -7,8 +7,6 @@ use crate::drivers::vga;
 
 use core::panic::PanicInfo;
 
-static HELLO: &[u8] = b"Hello World!";
-
 /// This function is called on panic.
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
@@ -19,10 +17,20 @@ fn panic(_info: &PanicInfo) -> ! {
 pub extern "C" fn kernel_main() -> ! {
     let mut b: vga::VGA = vga::VGA::new();
 
-    b.clean();
-    b.putstr("Bienvenue dans KFS1");
-    // for (i, &byte) in HELLO.iter().enumerate() {
-    // }
+    b.refresh();
+
+    // b.clean();
+    b.putstr("/* ************************************************************************** */");
+    b.putstr("/*                                                                            */");
+    b.putstr("/*                                                        :::      ::::::::   */");
+    b.putstr("/*                                                      :+:      :+:    :+:   */");
+    b.putstr("/*                                                    +:+ +:+         +:+     */");
+    b.putstr("/*                                                  +#+  +:+       +#+        */");
+    b.putstr("/*                                                +#+#+#+#+#+   +#+           */");
+    b.putstr("/*                                                     #+#    #+#             */");
+    b.putstr("/*                                                    ###   ########.fr       */");
+    b.putstr("/*                                                                            */");
+    b.putstr("/* ************************************************************************** */");
 
     loop {}
 }
