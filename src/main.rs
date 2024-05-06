@@ -15,22 +15,8 @@ fn panic(_info: &PanicInfo) -> ! {
 
 #[no_mangle] // don't mangle the name of this function
 pub extern "C" fn kernel_main() -> ! {
-    let mut b: vga::VGA = vga::VGA::new();
-
-    b.refresh();
-
-    // b.clean();
-    b.putstr("/* ************************************************************************** */");
-    b.putstr("/*                                                                            */");
-    b.putstr("/*                                                        :::      ::::::::   */");
-    b.putstr("/*                                                      :+:      :+:    :+:   */");
-    b.putstr("/*                                                    +:+ +:+         +:+     */");
-    b.putstr("/*                                                  +#+  +:+       +#+        */");
-    b.putstr("/*                                                +#+#+#+#+#+   +#+           */");
-    b.putstr("/*                                                     #+#    #+#             */");
-    b.putstr("/*                                                    ###   ########.fr       */");
-    b.putstr("/*                                                                            */");
-    b.putstr("/* ************************************************************************** */");
+    // vga::VGADRIVER.lock().putstr("salut\n");
+    println!("salut\n");
 
     loop {}
 }

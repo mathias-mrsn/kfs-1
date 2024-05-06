@@ -1,3 +1,7 @@
+use lazy_static::lazy_static;
+use core::fmt;
+use spin::Mutex;
+
 #[allow(dead_code)] // Remove warning about unused code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -20,11 +24,12 @@ pub enum Color {
     White = 15,
 }
 
-/// VGA screen display width
+lazy_static! {
+    pub static ref VGADRIVER: Mutex<VGA> = Mutex::new(VGA::new());
+}
+
 pub const VGA_WIDTH: usize = 80;
-/// VGA screen display heigth
 pub const VGA_HEIGHT: usize = 25;
-// VGA buffer physical address.
 pub const VGA_PADDR: *mut u16 = 0xb8000 as _;
 
 #[derive(Clone, Copy)]
@@ -36,6 +41,7 @@ impl VGAChar {
     fn new(c: u8, fg: u8, bg: u8) -> VGAChar {
         VGAChar(((c as u16) | ((fg | (bg << 4)) as u16) << 8) as _)
     }
+
     #[inline]
     fn get_vgac(c: VGAChar) -> (u8, u8, u8) {
         (
@@ -46,9 +52,6 @@ impl VGAChar {
     }
 }
 
-/// Structure used to store information about the current state
-/// of the VGA buffer (rows, columns, index...).
-// #[repr(transparent)]
 pub struct VGA {
     c_index: usize,
     buffer: [VGAChar; VGA_WIDTH * VGA_HEIGHT],
@@ -77,6 +80,7 @@ impl VGA {
             }
         }
         if self.c_index == VGA_HEIGHT * VGA_WIDTH {
+            self.c_index -= VGA_WIDTH;
             unsafe {
                 self.scrolldown(1);
             }
@@ -85,6 +89,12 @@ impl VGA {
 
     pub unsafe fn scrolldown(&mut self, i: u32) {
         let mut y = 0;
+
+        assert!(
+            (i as usize) < VGA_HEIGHT,
+            "scrolldown(): parameter must be lower than {}",
+            VGA_HEIGHT
+        );
         for j in (i as usize * VGA_WIDTH)..(VGA_WIDTH * VGA_HEIGHT) {
             self.buffer[y] = self.buffer[j];
             y += 1;
@@ -106,3 +116,28 @@ impl VGA {
         }
     }
 }
+
+#[macro_export]
+macro_rules! print {
+    ($($arg:tt)*) => {{
+        $crate::vga::_print(format_args!($($arg)*));
+    }};
+}
+
+#[macro_export]
+macro_rules! println {
+    () => {
+        $crate::_print!("\n")
+    };
+    ($($arg:tt)*) => {{
+        $crate::print!("{}\n", format_args!($($arg)*));
+    }};
+}
+
+#[doc(hidden)]
+pub fn _print(args: fmt::Arguments) {
+    if let Some(s) = args.as_str() {
+        VGADRIVER.lock().putstr(s);
+    }
+}
+
