@@ -1,14 +1,8 @@
 [package]
-name = "_KERNEL_NAME_"
+name = "kfs-1"
 version = "0.1.0"
-authors = ["MAURAISIN Mathias <mamaurai@student.42.fr>"]
-edition = "2021"
-
-[lib]
-name = "_KERNEL_NAME_"
-path = "src/main.rs"
-crate-type = ["staticlib"]
-
+authors = ["Author Name <author@example.com>"]
+edition = "2024"
 
 # the profile used for `cargo build`
 [profile.dev]
@@ -19,9 +13,10 @@ panic = "abort" # disable stack unwinding on panic
 panic = "abort" # disable stack unwinding on panic
 
 [dependencies]
-spin = "0.5.2"
+bitflags = "2.6.0"
 
-[dependencies.lazy_static]
-version = "1.0"
-features = ["spin_no_std"]
-
+# [lib]
+# name = "kfs1"
+# path = "src/main.rs"
+# crate-type = ["staticlib"]
+#
