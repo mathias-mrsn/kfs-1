@@ -7,10 +7,16 @@
   "features": "-mmx,-sse,-sse2,-soft-float",
   "linker": "rust-lld",
   "linker-flavor": "ld.lld",
-  "llvm-target": "i686-unknown-none",
+  "llvm-target": "i386-unknown-none",
   "os": "none",
   "panic-strategy": "abort",
   "target-c-int-width": "32",
   "target-endian": "little",
-  "target-pointer-width": "32"
+  "target-pointer-width": "32",
+  "pre-link-args": {
+    "ld": [
+      "-T",
+      "arch/i386-unknown-none/linker/linker.ld"
+    ]
+  }
 }
