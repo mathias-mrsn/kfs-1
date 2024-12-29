@@ -14,7 +14,7 @@ edition = "2024"
 
 [[bin]]
 name = "kfs"
-path = "src/boot.rs"
+path = "src/kernel.rs"
 
 [features]
 default = ["log_serial"]
@@ -26,6 +26,7 @@ lto = true
 
 [dependencies]
 bitflags = "2.6.0"
+spin = "0.9.8"
 
 # [lib]
 # name = "kfs1"
