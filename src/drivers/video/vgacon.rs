@@ -1,5 +1,6 @@
 /*
  * http://www.osdever.net/FreeVGA/home.htm
+ * https://github.com/torvalds/linux/blob/master/drivers/video/console/vgacon.c
  * TODO: Change few types (usize to u32, etc...)
  * TODO: Create new tests
  */
@@ -8,11 +9,68 @@ use core::cmp;
 use core::fmt;
 use core::ptr;
 
+use crate::io::{inb, outb};
+
 pub const BLANK: u16 = 0x0000;
 pub const VGA_VRAM_BASE: *mut u16 = 0xb8000 as _;
 pub const VGA_INDEX_MARK: u16 = 0x0530;
 pub const VGACON_C: usize = 80;
 pub const VGACON_R: usize = 25;
+
+pub const VGA_CRT_DR: u16 = 0x3D5;
+pub const VGA_CRT_AR: u16 = 0x3D4;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum CTRCRegistersIndexes
+{
+    VgaCrtcHTotal,
+    VgaCrtcHDisp,
+    VgaCrtcHBlankStart,
+    VgaCrtcHBlankEnd,
+    VgaCrtcHSyncStart,
+    VgaCrtcHSyncEnd,
+    VgaCrtcVTotal,
+    VgaCrtcOverflow,
+    VgaCrtcPresetRow,
+    VgaCrtcMaxScan,
+    VgaCrtcCursorStart,
+    VgaCrtcCursorEnd,
+    VgaCrtcStartHi,
+    VgaCrtcStartLo,
+    VgaCrtcCursorHi,
+    VgaCrtcCursorLo,
+    VgaCrtcVSyncStart,
+    VgaCrtcVSyncEnd,
+    VgaCrtcVDispEnd,
+    VgaCrtcOffset,
+    VgaCrtcUnderline,
+    VgaCrtcVBlankStart,
+    VgaCrtcVBlankEnd,
+    VgaCrtcMode,
+    VgaCrtcLineCompare,
+}
+
+#[inline(always)]
+pub fn ctrc_write(
+    index: u8,
+    value: u8,
+)
+{
+    unsafe {
+        outb(VGA_CRT_AR, index);
+        outb(VGA_CRT_DR, value);
+    }
+}
+
+#[inline(always)]
+fn ctrc_read(index: u8) -> u8
+{
+    unsafe {
+        outb(VGA_CRT_AR, index);
+        inb(VGA_CRT_DR)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScrollDir
@@ -175,12 +233,41 @@ where
         }
     }
 
-    // pub fn cursor(
-    //     &mut self,
-    //     enable: bool,
-    // )
-    // {
-    // }
+    pub fn cursor(
+        &mut self,
+        enable: bool,
+    )
+    {
+        let mut c = ctrc_read(CTRCRegistersIndexes::VgaCrtcCursorStart as u8);
+
+        if enable {
+            c &= 0xdf;
+        } else {
+            c |= 0x20;
+        }
+
+        ctrc_write(CTRCRegistersIndexes::VgaCrtcCursorStart as u8, c);
+    }
+
+    pub fn cursor_size(
+        &mut self,
+        from: u8,
+        to: u8,
+    )
+    {
+        if from > 16 || to > 16 {
+            return;
+        }
+
+        let mut c_start: u8 = ctrc_read(CTRCRegistersIndexes::VgaCrtcCursorStart as u8);
+        let mut c_end: u8 = ctrc_read(CTRCRegistersIndexes::VgaCrtcCursorEnd as u8);
+
+        c_start = (c_start & 0xc0) | from;
+        c_end = (c_end & 0xe0) | to;
+
+        ctrc_write(CTRCRegistersIndexes::VgaCrtcCursorStart as u8, c_start);
+        ctrc_write(CTRCRegistersIndexes::VgaCrtcCursorEnd as u8, c_end);
+    }
 
     pub fn scroll(
         &mut self,
@@ -273,6 +360,29 @@ where
     }
 }
 
+impl<const R: usize, const C: usize, const A: usize> fmt::Write for VgaCon<R, C, A>
+where
+    [(); R * C * A]:,
+{
+    fn write_str(
+        &mut self,
+        s: &str,
+    ) -> fmt::Result
+    {
+        self.putstr(s);
+        Ok(())
+    }
+
+    fn write_char(
+        &mut self,
+        c: char,
+    ) -> fmt::Result
+    {
+        self.putc(c as u8);
+        Ok(())
+    }
+}
+
 #[test_case]
 fn test_screen1()
 {
@@ -328,26 +438,3 @@ fn test_scroll2() {}
 
 #[test_case]
 fn test_indicator1() {}
-
-impl<const R: usize, const C: usize, const A: usize> fmt::Write for VgaCon<R, C, A>
-where
-    [(); R * C * A]:,
-{
-    fn write_str(
-        &mut self,
-        s: &str,
-    ) -> fmt::Result
-    {
-        self.putstr(s);
-        Ok(())
-    }
-
-    fn write_char(
-        &mut self,
-        c: char,
-    ) -> fmt::Result
-    {
-        self.putc(c as u8);
-        Ok(())
-    }
-}

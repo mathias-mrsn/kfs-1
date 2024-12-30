@@ -81,6 +81,8 @@ pub extern "C" fn _start()
     }
 }
 
+// use crate::drivers::video;
+
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main(multiboot_magic: u32) -> !
 {
@@ -91,7 +93,9 @@ pub extern "C" fn kernel_main(multiboot_magic: u32) -> !
     #[cfg(test)]
     kernel_maintest();
 
-    println!("{} hello", 3);
+    for _i in 0..24 {
+        println!("{} hello", 3);
+    }
 
     loop {}
 }
