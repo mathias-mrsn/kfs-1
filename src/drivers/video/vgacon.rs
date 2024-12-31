@@ -1,13 +1,10 @@
 /*
  * http://www.osdever.net/FreeVGA/home.htm
  * https://github.com/torvalds/linux/blob/master/drivers/video/console/vgacon.c
- * TODO: Change few types (usize to u32, etc...)
- * TODO: Create new tests
  */
 
 use core::cmp;
 use core::fmt;
-use core::ptr;
 
 use crate::io::{inb, outb};
 
@@ -17,11 +14,20 @@ pub const VGA_INDEX_MARK: u16 = 0x0530;
 pub const VGACON_C: usize = 80;
 pub const VGACON_R: usize = 25;
 
+/**
+ * CRT Controller
+ */
+
+/* CRT Controller Registers */
 pub const VGA_CRT_DR: u16 = 0x3D5;
 pub const VGA_CRT_AR: u16 = 0x3D4;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+const CURSOR_ENABLE_MASK: u8 = 0xdf;
+const CURSOR_DISABLE_MASK: u8 = 0x20;
+
+/* CRT Controller Indexes */
 #[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CTRCRegistersIndexes
 {
     VgaCrtcHTotal,
@@ -96,7 +102,6 @@ pub enum BlankingMode
     BlankAll,
 }
 
-// #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Color
@@ -119,14 +124,36 @@ pub enum Color
     White      = 15,
 }
 
+/*
+ * vc_screenbuf ------> +---------------+-.
+ *                      | ------------> |  \
+ *                      | | screen_size |   |
+ *                      | |             |    > area 1
+ *                      | |             |   |
+ *                      | v             |  /
+ *                      +---------------+-:
+ *                      |               |  \
+ * vc_visible_origin > ^| $> ls         |   |
+ *                     || file          |    > area 2
+ *           vc_rows  < | file2         |   |
+ *                     || $> cat file   |  /
+ * vc_origin --------> |+---------------+-:
+ *                     || Hello         |  \
+ *                     v| $> uname      |   |
+ *                      | Darwin        |    > area 3
+ * vc_index ------------|--------v      |   |
+ *                      | $> echo       |  /
+ *                      +---------------+-'
+ *                      <--- vc_cols --->
+ */
 #[derive(Debug)]
 pub struct VgaCon<const R: usize, const C: usize, const A: usize>
 where
     [(); R * C * A]:,
 {
     pub vc_num:              u8,
-    pub vc_offset:           usize,
-    pub vc_lock:             bool,
+    pub vc_voffset:          usize,
+    pub vc_hoffset:          usize,
     pub vc_index:            usize,
     pub vc_screen_size:      usize,
     pub vc_foreground_color: Color,
@@ -134,6 +161,7 @@ where
     pub vc_screenbuf:        [u16; R * C * A],
     pub vc_screenbuf_size:   usize,
     pub vc_visible_origin:   usize,
+    pub vc_origin:           usize,
     pub vc_rows:             usize,
     pub vc_cols:             usize,
 }
@@ -144,26 +172,44 @@ where
 {
     pub const fn new(
         id: u8,
-        offset: usize,
+        horizontal_offset: usize,
+        vertical_offset: usize,
         foreground_color: Color,
         background_color: Color,
     ) -> Self
     {
-        debug_assert!(id < 10, "VGA Index must be lower than 10");
+        assert!(id < 10, "VGA Index must be lower than 10");
 
         Self {
             vc_num:              id,
-            vc_offset:           offset,
-            vc_lock:             false,
-            vc_index:            0,
+            vc_voffset:          vertical_offset,
+            vc_hoffset:          horizontal_offset,
+            vc_index:            C * (R - 1),
             vc_screen_size:      R * C,
             vc_foreground_color: foreground_color,
             vc_background_color: background_color,
             vc_screenbuf:        [BLANK; R * C * A],
             vc_screenbuf_size:   R * C * A,
-            vc_visible_origin:   0,
+            vc_visible_origin:   C * R * (A - 1),
+            vc_origin:           C * R * (A - 1),
             vc_rows:             R,
             vc_cols:             C,
+        }
+    }
+
+    #[inline(always)]
+    fn _write(
+        &mut self,
+        index: usize,
+        word: u16,
+    )
+    {
+        unsafe {
+            *VGA_VRAM_BASE.offset(
+                ((((index / self.vc_cols) + self.vc_voffset) * VGACON_C)
+                    + self.vc_hoffset
+                    + (index % self.vc_cols)) as isize,
+            ) = word;
         }
     }
 
@@ -183,29 +229,22 @@ where
         background: Option<u8>,
     )
     {
-        if self.vc_lock {
-            return;
-        }
-
         let bg_color = background.unwrap_or(self.vc_background_color as u8) & 0xf;
         let fg_color = foreground.unwrap_or(self.vc_foreground_color as u8) & 0xf;
-        let byte = (c as u16) | ((bg_color as u16) << 12) | ((fg_color as u16) << 8);
+        let word = (c as u16) | ((bg_color as u16) << 12) | ((fg_color as u16) << 8);
 
-        if self.vc_visible_origin != 0 {
+        if self.vc_visible_origin != self.vc_origin {
             self.scroll(ScrollDir::GoToBottom, None);
         }
 
-        if self.vc_index >= self.vc_cols {
+        if self.vc_index == self.vc_screen_size {
             self.scroll(ScrollDir::ScDown, Some(1));
         }
 
-        self.vc_screenbuf[self.vc_index] = byte;
-        unsafe {
-            let offset = ((self.vc_rows - 1) * VGACON_C + self.vc_index) as isize;
-            *VGA_VRAM_BASE.offset(self.vc_offset as isize + offset) = byte;
-        }
-
+        self.vc_screenbuf[self.vc_index + self.vc_origin] = word;
+        self._write(self.vc_index, word);
         self.vc_index += 1;
+        self.cursor_update();
     }
 
     #[inline(always)]
@@ -241,9 +280,9 @@ where
         let mut c = ctrc_read(CTRCRegistersIndexes::VgaCrtcCursorStart as u8);
 
         if enable {
-            c &= 0xdf;
+            c &= CURSOR_ENABLE_MASK;
         } else {
-            c |= 0x20;
+            c |= CURSOR_DISABLE_MASK;
         }
 
         ctrc_write(CTRCRegistersIndexes::VgaCrtcCursorStart as u8, c);
@@ -269,6 +308,19 @@ where
         ctrc_write(CTRCRegistersIndexes::VgaCrtcCursorEnd as u8, c_end);
     }
 
+    pub fn cursor_update(&mut self)
+    {
+        let pos: usize = (((self.vc_index / self.vc_cols) + self.vc_voffset) * VGACON_C)
+            + self.vc_hoffset
+            + (self.vc_index % self.vc_cols);
+
+        ctrc_write(CTRCRegistersIndexes::VgaCrtcCursorLo as u8, pos as u8);
+        ctrc_write(
+            CTRCRegistersIndexes::VgaCrtcCursorHi as u8,
+            (pos >> 8) as u8,
+        );
+    }
+
     pub fn scroll(
         &mut self,
         dir: ScrollDir,
@@ -278,30 +330,27 @@ where
         let delta = lines.unwrap_or(0) * self.vc_cols;
         match dir {
             ScrollDir::ScUp if lines.is_some() => {
-                self.vc_visible_origin = cmp::min(
-                    self.vc_visible_origin + delta,
-                    self.vc_screenbuf_size - self.vc_screen_size,
-                );
-                self.restore();
+                self.vc_visible_origin = self.vc_visible_origin.saturating_sub(delta);
             }
             ScrollDir::ScDown if lines.is_some() => {
-                if delta < self.vc_visible_origin {
-                    self.vc_visible_origin -= delta;
-                } else {
-                    let adjusted_delta =
-                        cmp::min(delta - self.vc_visible_origin, self.vc_screenbuf_size);
-                    self.vc_screenbuf
-                        .copy_within(..(self.vc_screenbuf_size - adjusted_delta), adjusted_delta);
-                    self.vc_screenbuf[..adjusted_delta].fill(0);
-                    self.vc_visible_origin = 0;
-                    self.vc_index = 0;
-                }
+                /* Number of new lines */
+                let adjusted_delta = cmp::min(
+                    self.vc_visible_origin
+                        .saturating_add(delta)
+                        .saturating_sub(self.vc_origin),
+                    self.vc_screenbuf_size,
+                );
+
+                self.vc_visible_origin = cmp::min(self.vc_visible_origin + delta, self.vc_origin);
+                self.vc_screenbuf.copy_within(adjusted_delta.., 0);
+                self.vc_screenbuf[(self.vc_screenbuf_size - adjusted_delta)..].fill(0);
+                self.vc_index = self.vc_cols * (self.vc_rows - 1)
             }
             ScrollDir::GoToBottom => {
-                self.vc_visible_origin = 0;
+                self.vc_visible_origin = self.vc_origin;
             }
             ScrollDir::GoToTop => {
-                self.vc_visible_origin = self.vc_screenbuf_size - self.vc_screen_size
+                self.vc_visible_origin = 0;
             }
             _ => {}
         }
@@ -313,12 +362,14 @@ where
         mode: BlankingMode,
     )
     {
-        if mode == BlankingMode::BlankScreen
-            || mode == BlankingMode::BlankScreenVisibleBuffer
-            || mode == BlankingMode::BlankAll
-        {
-            unsafe {
-                ptr::write_bytes(VGA_VRAM_BASE.add(self.vc_offset), 0x00, self.vc_screen_size);
+        if matches!(
+            mode,
+            BlankingMode::BlankScreen
+                | BlankingMode::BlankScreenVisibleBuffer
+                | BlankingMode::BlankAll
+        ) {
+            for i in 0..(self.vc_rows * self.vc_cols) {
+                self._write(i, 0x0000);
             }
         }
         if matches!(
@@ -335,27 +386,13 @@ where
 
     pub fn restore(&mut self)
     {
-        for rows in 0..self.vc_rows {
-            for cols in 0..self.vc_cols {
-                unsafe {
-                    *VGA_VRAM_BASE.offset(
-                        ((((self.vc_rows - rows - 1) * VGACON_C) + cols) + self.vc_offset) as isize,
-                    ) = self.vc_screenbuf
-                        [(rows * self.vc_cols) + cols + self.vc_visible_origin as usize];
-                }
-            }
+        for i in 0..(self.vc_rows * self.vc_cols) {
+            self._write(i, self.vc_screenbuf[self.vc_visible_origin + i]);
         }
+        self._write(self.vc_cols - 1, VGA_INDEX_MARK + self.vc_num as u16);
 
-        unsafe {
-            *VGA_VRAM_BASE.offset(((self.vc_cols - 1) + self.vc_offset) as isize) =
-                VGA_INDEX_MARK + self.vc_num as u16;
-        }
-
-        if self.vc_visible_origin != 0 {
-            unsafe {
-                *VGA_VRAM_BASE.offset(((self.vc_cols - 2) + self.vc_offset) as isize) =
-                    VgaConIndicators::Visual as _;
-            }
+        if self.vc_visible_origin != self.vc_origin {
+            self._write(self.vc_cols - 2, VgaConIndicators::Visual as _);
         }
     }
 }
@@ -386,7 +423,7 @@ where
 #[test_case]
 fn test_screen1()
 {
-    let mut vga: VgaCon<25, 80, 1> = VgaCon::new(1u8, 0, Color::White, Color::Black);
+    let mut vga: VgaCon<25, 80, 1> = VgaCon::new(1u8, 0, 0, Color::White, Color::Black);
     vga.putc('>' as u8);
     for _i in 0..24 {
         vga.putstr("\n");
@@ -400,7 +437,7 @@ fn test_screen1()
 #[test_case]
 fn test_screen2()
 {
-    let mut vga: VgaCon<25, 80, 1> = VgaCon::new(1u8, 0, Color::White, Color::Black);
+    let mut vga: VgaCon<25, 80, 1> = VgaCon::new(1u8, 0, 0, Color::White, Color::Black);
     for _i in 0..((25 * 80) - 1) {
         vga.putc('>' as u8);
     }
@@ -412,10 +449,10 @@ fn test_screen2()
 }
 
 #[test_case]
-fn test_scroll1()
+fn test_scroll()
 {
-    let mut vga: VgaCon<25, 40, 3> = VgaCon::new(1u8, 20, Color::White, Color::Black);
-    for _i in 0..24 {
+    let mut vga: VgaCon<25, 40, 3> = VgaCon::new(1u8, 20, 0, Color::White, Color::Black);
+    for _i in 0..50 {
         vga.putstr(">\n");
     }
     vga.scroll(ScrollDir::ScUp, Some(500));
@@ -434,7 +471,39 @@ fn test_scroll1()
 }
 
 #[test_case]
-fn test_scroll2() {}
-
-#[test_case]
-fn test_indicator1() {}
+fn test_indicator()
+{
+    let mut vga: VgaCon<25, 80, 2> = VgaCon::new(1u8, 0, 0, Color::White, Color::Black);
+    vga.scroll(ScrollDir::ScUp, Some(5));
+    unsafe {
+        assert_eq!(
+            *VGA_VRAM_BASE.offset((VGACON_C - 2) as isize),
+            VgaConIndicators::Visual as u16
+        );
+        assert_eq!(
+            *VGA_VRAM_BASE.offset((VGACON_C - 1) as isize),
+            VGA_INDEX_MARK + 1
+        );
+    }
+    vga.scroll(ScrollDir::ScDown, Some(5));
+    unsafe {
+        assert_eq!(*VGA_VRAM_BASE.offset((VGACON_C - 2) as isize), 0x0000);
+        assert_eq!(
+            *VGA_VRAM_BASE.offset((VGACON_C - 1) as isize),
+            VGA_INDEX_MARK + 1
+        );
+    }
+    vga.blank(BlankingMode::BlankAll);
+    let mut vga2: VgaCon<25, 80, 1> = VgaCon::new(2u8, 0, 0, Color::White, Color::Black);
+    vga2.scroll(ScrollDir::ScUp, Some(5));
+    unsafe {
+        assert_ne!(
+            *VGA_VRAM_BASE.offset((VGACON_C - 2) as isize),
+            VgaConIndicators::Visual as u16
+        );
+        assert_eq!(
+            *VGA_VRAM_BASE.offset((VGACON_C - 1) as isize),
+            VGA_INDEX_MARK + 2
+        );
+    }
+}

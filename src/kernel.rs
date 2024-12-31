@@ -93,9 +93,7 @@ pub extern "C" fn kernel_main(multiboot_magic: u32) -> !
     #[cfg(test)]
     kernel_maintest();
 
-    for _i in 0..24 {
-        println!("{} hello", 3);
-    }
+    println!("{} hello", 3);
 
     loop {}
 }
