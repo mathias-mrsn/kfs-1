@@ -409,7 +409,7 @@ impl VgaConsole
             MemoryRanges::Small => 0x8000,
         };
 
-        let screen_size: u32 = (rows as u32 * cols as u32) * core::mem::size_of::<u16>() as u32;
+        let screen_size: u32 = rows as u32 * cols as u32 * core::mem::size_of::<u16>() as u32;
 
         let mut con = Self {
             vc_vram_base:        vram_base,
@@ -676,14 +676,9 @@ impl VgaConsole
                 if self.vc_origin_end + delta > self.vc_vram_end {
                     unsafe {
                         ptr::copy(
-                            self.vc_origin as *mut u16,
-                            self.vc_vram_base as *mut u16,
-                            self.vc_screen_size as usize,
-                        );
-                        writec::<u16>(
-                            (self.vc_vram_base as *mut u16).add(self.vc_screen_size as usize),
-                            BLANK,
-                            (self.vc_vram_size - self.vc_screen_size) as usize,
+                            self.vc_origin as *mut u8,
+                            self.vc_vram_base as *mut u8,
+                            (self.vc_screen_size - delta) as usize,
                         );
                     }
                     self.vc_origin = self.vc_vram_base;
@@ -693,6 +688,11 @@ impl VgaConsole
                 self.vc_index = (self.vc_index - oldo) + self.vc_origin;
                 self.vc_origin_end = self.vc_origin + self.vc_screen_size;
                 self.vc_visible_origin = self.vc_origin;
+                // unsafe {
+                //     writec::<u16>(
+                //         (self.vc_origin as *mut u16).add((self.vc_screen_size
+                // - delta) as usize),         BLANK, delta as usize, );
+                // }
             }
             ScrollDir::Bottom => {
                 self.vc_visible_origin = self.vc_origin;
@@ -991,6 +991,8 @@ fn test_putstr()
 #[test_case]
 fn test_scroll()
 {
+    use core::fmt::Write;
+
     let mut vga: VgaConsole = VgaConsole::new(
         VGAColor::White,
         VGAColor::Black,
@@ -1000,9 +1002,13 @@ fn test_scroll()
         Some(CursorTypes::Full),
     );
 
-    for _i in 0..1000 {
-        vga.scroll(ScrollDir::Down, Some(10));
-        vga.putstr("Hello");
+    for _i in 0..205 {
+        writeln!(
+            vga,
+            "o -> {:#07x}; end -> {:#07x}; i -> {:#07x}",
+            vga.vc_origin as u32, vga.vc_origin_end as u32, vga.vc_index as u32
+        )
+        .unwrap();
     }
 
     unsafe {
