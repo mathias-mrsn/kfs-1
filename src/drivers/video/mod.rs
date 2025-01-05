@@ -1,14 +1,15 @@
+pub mod vgac;
 pub mod vgacon;
 
 use core::fmt::{self, Write};
 use spin::Mutex;
 
-pub static LOGGER: Mutex<vgacon::VgaCon<25, 80, 3>> = Mutex::new(vgacon::VgaCon::new(
+pub static LOGGER: Mutex<vgacon::VgaCon<20, 80, 3>> = Mutex::new(vgacon::VgaCon::new(
     1u8,
     0,
     0,
     vgacon::Color::White,
-    vgacon::Color::Pink,
+    vgacon::Color::Black,
 ));
 
 #[doc(hidden)]
