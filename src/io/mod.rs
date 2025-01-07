@@ -5,6 +5,10 @@
  */
 use core::arch::asm;
 
+pub mod crtc;
+pub mod gfxc;
+pub mod ps2;
+
 #[inline(always)]
 pub unsafe fn inb(port: u16) -> u8
 {
