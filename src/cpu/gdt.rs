@@ -3,7 +3,7 @@ use core::ptr;
 const GDT_MAX_DESCRIPTORS: u8 = 0x20;
 
 #[derive(Debug, Clone, Copy)]
-pub struct GDTSegmentDescriptor(u64);
+pub struct GDTSegmentDescriptor(pub u64);
 
 impl GDTSegmentDescriptor
 {
@@ -53,7 +53,7 @@ impl<const M: usize> GlobalDescriptorTable<M>
     //     "GDT can be up to 65536 bytes in length (8192 entries)"
     // );
 
-    pub fn mem_clear(&mut self)
+    pub fn clear(&mut self)
     {
         unsafe {
             ptr::write_bytes(
@@ -62,10 +62,31 @@ impl<const M: usize> GlobalDescriptorTable<M>
                 M * core::mem::size_of::<GDTSegmentDescriptor>(),
             );
         }
+        self.len = 1;
     }
 
-    // pub fn fill(slice: &[GDTSegmentDescriptor]) {}
-    //
-    // pub fn add(seg: GDTSegmentDescriptor) {}
-    // pub fn remove(index: usize) {}
+    #[inline(always)]
+    pub fn add_raw_entry(
+        &mut self,
+        entry: u64,
+    )
+    {
+        self.add_entry(GDTSegmentDescriptor(entry));
+    }
+
+    pub fn add_entry(
+        &mut self,
+        entry: GDTSegmentDescriptor,
+    )
+    {
+        self.table[self.len] = entry;
+        self.len += 1;
+    }
+
+    pub fn append_slice(
+        &mut self,
+        slice: &[GDTSegmentDescriptor],
+    )
+    {
+    }
 }

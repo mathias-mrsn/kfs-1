@@ -107,8 +107,11 @@ pub extern "C" fn kernel_main(multiboot_magic: u32) -> !
         Some(vgac::CursorTypes::Full),
     );
 
+    let g;
     unsafe {
-        crate::cpu::GDT.mem_clear();
+        g = crate::cpu::GDT;
+        (*g).clear();
+        (*g).add_entry(crate::cpu::gdt::GDTSegmentDescriptor(0xffffffffffffffff));
     }
 
     loop {
