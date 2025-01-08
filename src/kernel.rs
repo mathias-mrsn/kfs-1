@@ -15,6 +15,7 @@
 #![test_runner(crate::test::test_runner)]
 #![reexport_test_harness_main = "kernel_maintest"]
 
+mod cpu;
 mod drivers;
 mod io;
 mod multiboot;
@@ -105,6 +106,10 @@ pub extern "C" fn kernel_main(multiboot_magic: u32) -> !
         vgac::MemoryRanges::Small,
         Some(vgac::CursorTypes::Full),
     );
+
+    unsafe {
+        crate::cpu::GDT.mem_clear();
+    }
 
     loop {
         while (unsafe { io::inb(0x64) } & 1) == 0 {}

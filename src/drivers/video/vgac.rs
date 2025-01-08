@@ -1,5 +1,6 @@
 /**
  * TODO: Need to improve some calculations
+ * TODO: Need to clear mutex lock
  *
  * Ideas for implementation:
  * - Create split screen mode
