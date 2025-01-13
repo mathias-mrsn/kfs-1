@@ -1,92 +1,142 @@
-use core::ptr;
+use crate::instructions::tables::lgdt;
+use bitflags::bitflags;
+use core::mem;
 
-const GDT_MAX_DESCRIPTORS: u8 = 0x20;
+const GDT_PHYS_ADDR: u32 = 0x800;
+const GDT_MAX_DESCRIPTORS: usize = 8192;
 
-#[derive(Debug, Clone, Copy)]
-pub struct GDTSegmentDescriptor(pub u64);
-
-impl GDTSegmentDescriptor
+#[derive(Debug)]
+#[repr(C, packed)]
+pub struct DescriptorTablePointer
 {
-    pub fn new(
-        base: u32,
-        limit: u32,
-        access: u8,
-        flags: u8,
-    ) -> Self
-    {
-        let mut descriptor: u64 = 0;
-
-        // High 32 bits of the descriptor
-        descriptor |= (limit as u64 & 0x000F0000) as u64;
-        descriptor |= ((access as u64) << 8) & 0x0000FF00;
-        descriptor |= ((flags as u64) << 20) & 0x00F00000;
-        descriptor |= ((base as u64 >> 16) & 0x000000FF) as u64;
-        descriptor |= ((base as u64) & 0xFF000000) as u64;
-
-        descriptor <<= 32;
-
-        // Low 32 bits of the descriptor
-        descriptor |= ((base as u64) & 0x0000FFFF) << 16;
-        descriptor |= (limit as u64) & 0x0000FFFF;
-
-        Self(descriptor)
-    }
-
-    // pub fn get_base() -> u32 {}
-    // pub fn get_limit() -> u32 {}
-    // pub fn get_flags() -> u32 {}
-    // pub fn get_access() -> u32 {}
+    pub limit: u16,
+    pub base:  *const (),
 }
 
 #[derive(Debug)]
-pub struct GlobalDescriptorTable<const M: usize = 1>
+pub struct DescriptorTable<const M: usize = 1>
 {
-    table: [GDTSegmentDescriptor; M],
+    table: [u64; M],
     len:   usize,
 }
 
-impl<const M: usize> GlobalDescriptorTable<M>
-{
-    // assert!(M > 0, "GDT need at least 1 entry");
-    // assert!(
-    //     M <= 8192,
-    //     "GDT can be up to 65536 bytes in length (8192 entries)"
-    // );
+struct AssertTableLimit<const M: usize>;
 
+impl<const M: usize> AssertTableLimit<M>
+{
+    const OK: usize = {
+        assert!(M > 0, "GDT need at least 1 entry");
+        assert!(
+            M <= 8192,
+            "GDT can be up to 65536 bytes in length (8192 entries)"
+        );
+        0
+    };
+}
+
+impl<const M: usize> DescriptorTable<M>
+where
+    [(); AssertTableLimit::<M>::OK]:,
+{
     pub fn clear(&mut self)
     {
-        unsafe {
-            ptr::write_bytes(
-                self.table.as_mut_ptr() as *mut u8,
-                0x00,
-                M * core::mem::size_of::<GDTSegmentDescriptor>(),
-            );
-        }
+        self.table.fill(0);
         self.len = 1;
     }
 
-    #[inline(always)]
-    pub fn add_raw_entry(
+    pub fn push(
         &mut self,
-        entry: u64,
+        descriptor: u64,
     )
     {
-        self.add_entry(GDTSegmentDescriptor(entry));
-    }
-
-    pub fn add_entry(
-        &mut self,
-        entry: GDTSegmentDescriptor,
-    )
-    {
-        self.table[self.len] = entry;
+        assert!(self.len < M, "GDT Table is already full");
+        self.table[self.len] = descriptor;
         self.len += 1;
     }
 
-    pub fn append_slice(
+    pub fn fill(
         &mut self,
-        slice: &[GDTSegmentDescriptor],
+        descriptors: &[u64],
     )
     {
+        for &descriptor in descriptors {
+            self.push(descriptor);
+        }
+    }
+
+    pub fn load(&self)
+    {
+        let ptr = self.as_ptr();
+        unsafe { lgdt(&ptr) };
+    }
+
+    pub fn as_ptr(&self) -> DescriptorTablePointer
+    {
+        DescriptorTablePointer {
+            limit: (self.len * mem::size_of::<u64>() - 1) as u16,
+            base:  self.table.as_ptr() as _,
+        }
+    }
+}
+
+bitflags! {
+    #[derive(Debug, Clone, Copy)]
+    pub struct DescriptorBits: u64 {
+        const A = 1 << 40;
+        const RW = 1 << 41;
+        const DC = 1 << 42;
+        const E = 1 << 43;
+        const S = 1 << 44;
+        const DPL_RING_3 = 3 << 45;
+        const DPL_RING_2 = 2 << 45;
+        const DPL_RING_1 = 1 << 45;
+        const P = 1 << 47;
+        const L = 1 << 53;
+        const DB = 1 << 54;
+        const G = 1 << 55;
+        const LIMIT_MAX = 0x000F_0000_0000_FFFF;
+    }
+}
+
+impl DescriptorBits
+{
+    const _DATA: Self = Self::from_bits_truncate(
+        Self::S.bits() | Self::P.bits() | Self::RW.bits() | Self::A.bits() | Self::LIMIT_MAX.bits(),
+    );
+
+    const _CODE: Self = Self::from_bits_truncate(Self::_DATA.bits() | Self::E.bits());
+
+    const KERNEL_CODE: Self =
+        Self::from_bits_truncate(Self::_CODE.bits() | Self::G.bits() | Self::DB.bits());
+
+    const KERNEL_DATA: Self =
+        Self::from_bits_truncate(Self::_DATA.bits() | Self::G.bits() | Self::DB.bits());
+
+    const KERNEL_STACK: Self = Self::KERNEL_DATA;
+
+    const USER_CODE: Self =
+        Self::from_bits_truncate(Self::KERNEL_CODE.bits() | Self::DPL_RING_3.bits());
+
+    const USER_DATA: Self =
+        Self::from_bits_truncate(Self::KERNEL_DATA.bits() | Self::DPL_RING_3.bits());
+
+    const USER_STACK: Self = Self::USER_DATA;
+}
+
+pub fn setup()
+{
+    pub static mut GDT: *mut DescriptorTable<7> = GDT_PHYS_ADDR as *mut DescriptorTable<7>;
+
+    unsafe {
+        (*GDT).clear();
+        (*GDT).fill(&[
+            DescriptorBits::KERNEL_CODE.bits(),
+            DescriptorBits::KERNEL_DATA.bits(),
+            DescriptorBits::KERNEL_DATA.bits(),
+            DescriptorBits::USER_CODE.bits(),
+            DescriptorBits::USER_DATA.bits(),
+            DescriptorBits::USER_DATA.bits(),
+        ]);
+        (*GDT).load();
     }
 }

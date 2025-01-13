@@ -17,6 +17,7 @@
 
 mod cpu;
 mod drivers;
+mod instructions;
 mod io;
 mod multiboot;
 mod panic;
@@ -27,6 +28,7 @@ mod utils;
 use core::arch::naked_asm;
 use core::mem::MaybeUninit;
 
+use crate::cpu::gdt;
 use crate::drivers::video::vgac;
 
 use crate::multiboot::{MULTIBOOT_HEADER_MAGIC, MultibootHeader, MultibootHeaderFlags};
@@ -94,10 +96,14 @@ pub extern "C" fn kernel_main(multiboot_magic: u32) -> !
         panic!("hi")
     }
 
+    cpu::protected_mode();
+
+    let m = instructions::tables::sgdt();
+
     #[cfg(test)]
     kernel_maintest();
 
-    // use core::fmt::Write;
+    use core::fmt::Write;
     let mut vga: vgac::VgaConsole = vgac::VgaConsole::new(
         vgac::VGAColor::White,
         vgac::VGAColor::Black,
@@ -107,16 +113,7 @@ pub extern "C" fn kernel_main(multiboot_magic: u32) -> !
         Some(vgac::CursorTypes::Full),
     );
 
-    let g;
-    unsafe {
-        g = crate::cpu::GDT;
-        (*g).clear();
-        (*g).add_entry(crate::cpu::gdt::GDTSegmentDescriptor(0xffffffffffffffff));
-    }
+    write!(vga, "gdt {:?}", m);
 
-    loop {
-        while (unsafe { io::inb(0x64) } & 1) == 0 {}
-        let c = io::ps2::read();
-        vga.putc(c);
-    }
+    loop {}
 }
