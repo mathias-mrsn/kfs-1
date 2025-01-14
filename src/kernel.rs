@@ -15,10 +15,10 @@
 #![test_runner(crate::test::test_runner)]
 #![reexport_test_harness_main = "kernel_maintest"]
 
+mod controllers;
 mod cpu;
 mod drivers;
 mod instructions;
-mod io;
 mod multiboot;
 mod panic;
 mod qemu;
@@ -96,9 +96,9 @@ pub extern "C" fn kernel_main(multiboot_magic: u32) -> !
         panic!("hi")
     }
 
-    cpu::protected_mode();
-
-    let m = instructions::tables::sgdt();
+    unsafe {
+        gdt::setup();
+    }
 
     #[cfg(test)]
     kernel_maintest();
@@ -107,13 +107,18 @@ pub extern "C" fn kernel_main(multiboot_magic: u32) -> !
     let mut vga: vgac::VgaConsole = vgac::VgaConsole::new(
         vgac::VGAColor::White,
         vgac::VGAColor::Black,
-        25,
-        80,
+        vgac::Resolution::R120_50,
         vgac::MemoryRanges::Small,
         Some(vgac::CursorTypes::Full),
     );
 
-    write!(vga, "gdt {:?}", m);
+    for i in 0..50 {
+        writeln!(vga, "{}", i).unwrap();
+    }
+
+    // unsafe {
+    //     write!(vga, "gdt {:#034b}", instructions::registers::rdcr0());
+    // }
 
     loop {}
 }

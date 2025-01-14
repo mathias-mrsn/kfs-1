@@ -9,7 +9,7 @@
  */
 use crate::utils::writec;
 
-use crate::io::{crtc, gfxc};
+use crate::controllers::{crtc, gfxc};
 use core::cmp;
 use core::fmt;
 use core::ptr;
@@ -69,6 +69,28 @@ pub enum MemoryRanges
     Medium = 1,
     /// B8000h-BFFFFh (32K region)
     Small  = 3,
+}
+
+/// Standard VGA text mode resolutions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Resolution
+{
+    /// 40 columns × 10 rows text mode
+    R40_10,
+    /// 40 columns × 25 rows text mode
+    R40_25,
+    /// 40 columns × 50 rows text mode
+    R40_50,
+    /// 80 columns × 10 rows text mode
+    R80_10,
+    /// 80 columns × 25 rows text mode (most common)
+    R80_25,
+    /// 80 columns × 50 rows text mode
+    R80_50,
+    /// 120 columns × 25 rows text mode
+    R120_25,
+    /// 120 columns × 50 rows text mode
+    R120_50,
 }
 
 /// Scrolling directions for VGA text mode.
@@ -193,8 +215,7 @@ impl VgaConsole
     pub fn new(
         foreground_color: VGAColor,
         background_color: VGAColor,
-        rows: u8,
-        cols: u8,
+        resolution: Resolution,
         memory_range: MemoryRanges,
         cursor_type: Option<CursorTypes>,
     ) -> Self
@@ -208,6 +229,17 @@ impl VgaConsole
             MemoryRanges::Large => 0x20000,
             MemoryRanges::Medium => 0xffff,
             MemoryRanges::Small => 0x8000,
+        };
+
+        let (cols, rows): (u8, u8) = match resolution {
+            Resolution::R40_10 => (40, 10),
+            Resolution::R40_25 => (40, 25),
+            Resolution::R40_50 => (40, 50),
+            Resolution::R80_10 => (80, 10),
+            Resolution::R80_25 => (80, 25),
+            Resolution::R80_50 => (80, 50),
+            Resolution::R120_25 => (120, 25),
+            Resolution::R120_50 => (120, 50),
         };
 
         let misc: u8 = gfxc::read(gfxc::Indexes::Misc) & 0xf2;
@@ -233,7 +265,7 @@ impl VgaConsole
 
         con.blank();
         con.cursor(cursor_type);
-        con.resize(rows, cols);
+        con.resize(cols, rows);
 
         con
     }
@@ -667,15 +699,15 @@ impl VgaConsole
     /// let mut vga = VgaConsole::new(/* ... */);
     ///
     /// // Resize to 25x80 text mode
-    /// vga.resize(25, 80);
+    /// vga.resize(80, 25);
     ///
     /// // Resize to 50x40 text mode
-    /// vga.resize(50, 40);
+    /// vga.resize(40, 50);
     /// ```
     pub fn resize(
         &mut self,
-        height: u8,
         width: u8,
+        height: u8,
     )
     {
         let mut scanlines: u32 = height as u32 * 16;
@@ -770,8 +802,7 @@ fn test_putstr()
     let mut vga: VgaConsole = VgaConsole::new(
         VGAColor::White,
         VGAColor::Black,
-        25,
-        80,
+        Resolution::R80_25,
         MemoryRanges::Small,
         Some(CursorTypes::Full),
     );
@@ -803,8 +834,7 @@ fn test_memory_bounderies()
     let mut vga: VgaConsole = VgaConsole::new(
         VGAColor::White,
         VGAColor::Black,
-        25,
-        80,
+        Resolution::R80_25,
         MemoryRanges::Small,
         Some(CursorTypes::Full),
     );
@@ -824,8 +854,7 @@ fn test_memory_bounderies()
     let mut vga_m: VgaConsole = VgaConsole::new(
         VGAColor::White,
         VGAColor::Black,
-        25,
-        80,
+        Resolution::R80_25,
         MemoryRanges::Medium,
         Some(CursorTypes::Full),
     );
@@ -845,8 +874,7 @@ fn test_memory_bounderies()
     let mut vga_l: VgaConsole = VgaConsole::new(
         VGAColor::White,
         VGAColor::Black,
-        25,
-        80,
+        Resolution::R80_25,
         MemoryRanges::Large,
         Some(CursorTypes::Full),
     );

@@ -1,6 +1,6 @@
 /// This module provides low-level access to the VGA Graphics Controller
 /// registers.
-use crate::io::{inb, outb};
+use crate::controllers::{inb, outb};
 
 /// VGA Graphics Controller Address Register port
 pub const AR_PORT: u16 = 0x3CE;

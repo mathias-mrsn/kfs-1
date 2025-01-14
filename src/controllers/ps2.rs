@@ -1,5 +1,5 @@
 /// This module provides low-level access to the PS2 Controller
-use crate::io::{inb, outb};
+use crate::controllers::{inb, outb};
 
 /// PS2 Controller Command port
 pub const C_PORT: u16 = 0x64;
