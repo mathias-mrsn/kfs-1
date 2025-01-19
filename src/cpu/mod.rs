@@ -1,5 +1,13 @@
+use bitflags::bitflags;
+use core::arch::asm;
 use core::fmt;
+use gdt::{Entry, GlobalDescriptorTable};
+use idt::InterruptDescriptorTable;
+use lazy_static::lazy_static;
 
+use crate::instructions::cpu::{cli, sti};
+
+pub mod apic;
 pub mod gdt;
 pub mod handlers;
 pub mod idt;
@@ -112,4 +120,149 @@ impl fmt::Debug for InterruptStackFrame
             .field("ss", &format_args!("0x{:04x}", ss))
             .finish()
     }
+}
+
+bitflags! {
+    pub struct CPUIDFeatureECX: u32 {
+        const SSE3         = 1 << 0;
+        const PCLMUL       = 1 << 1;
+        const DTES64       = 1 << 2;
+        const MONITOR      = 1 << 3;
+        const DS_CPL       = 1 << 4;
+        const VMX          = 1 << 5;
+        const SMX          = 1 << 6;
+        const EST          = 1 << 7;
+        const TM2          = 1 << 8;
+        const SSSE3        = 1 << 9;
+        const CID          = 1 << 10;
+        const SDBG         = 1 << 11;
+        const FMA          = 1 << 12;
+        const CX16         = 1 << 13;
+        const XTPR         = 1 << 14;
+        const PDCM         = 1 << 15;
+        const PCID         = 1 << 17;
+        const DCA          = 1 << 18;
+        const SSE4_1       = 1 << 19;
+        const SSE4_2       = 1 << 20;
+        const X2APIC       = 1 << 21;
+        const MOVBE        = 1 << 22;
+        const POPCNT       = 1 << 23;
+        const TSC          = 1 << 24;
+        const AES          = 1 << 25;
+        const XSAVE        = 1 << 26;
+        const OSXSAVE      = 1 << 27;
+        const AVX          = 1 << 28;
+        const F16C         = 1 << 29;
+        const RDRAND       = 1 << 30;
+        const HYPERVISOR   = 1 << 31;
+    }
+}
+
+bitflags! {
+    pub struct CPUIDFeatureEDX: u32 {
+        const FPU          = 1 << 0;
+        const VME          = 1 << 1;
+        const DE           = 1 << 2;
+        const PSE          = 1 << 3;
+        const TSC          = 1 << 4;
+        const MSR          = 1 << 5;
+        const PAE          = 1 << 6;
+        const MCE          = 1 << 7;
+        const CX8          = 1 << 8;
+        const APIC         = 1 << 9;
+        const SEP          = 1 << 11;
+        const MTRR         = 1 << 12;
+        const PGE          = 1 << 13;
+        const MCA          = 1 << 14;
+        const CMOV         = 1 << 15;
+        const PAT          = 1 << 16;
+        const PSE36        = 1 << 17;
+        const PSN          = 1 << 18;
+        const CLFLUSH      = 1 << 19;
+        const DS           = 1 << 21;
+        const ACPI         = 1 << 22;
+        const MMX          = 1 << 23;
+        const FXSR         = 1 << 24;
+        const SSE          = 1 << 25;
+        const SSE2         = 1 << 26;
+        const SS           = 1 << 27;
+        const HTT          = 1 << 28;
+        const TM           = 1 << 29;
+        const IA64         = 1 << 30;
+        const PBE          = 1 << 31;
+    }
+}
+
+lazy_static! {
+    pub static ref GDT: GlobalDescriptorTable = {
+        let mut m: GlobalDescriptorTable = GlobalDescriptorTable::default();
+
+        cli();
+
+        unsafe {
+            m.kernel_code = Entry::FM_COMMUN;
+            m.kernel_code.access.wr_executable(true);
+            m.kernel_code.access.wr_dpl(PrivilegeRings::Ring0);
+
+            m.kernel_data = Entry::FM_COMMUN;
+            m.kernel_data.access.wr_dpl(PrivilegeRings::Ring0);
+
+            m.kernel_stack = Entry::FM_COMMUN;
+            m.kernel_stack.access.wr_dpl(PrivilegeRings::Ring0);
+
+            m.user_code = Entry::FM_COMMUN;
+            m.user_code.access.wr_executable(true);
+            m.user_code.access.wr_dpl(PrivilegeRings::Ring3);
+
+            m.user_data = Entry::FM_COMMUN;
+            m.user_data.access.wr_dpl(PrivilegeRings::Ring3);
+
+            m.user_stack = Entry::FM_COMMUN;
+            m.user_stack.access.wr_dpl(PrivilegeRings::Ring3);
+
+            m.external_load(0x800);
+
+            asm!(
+                r#"
+            jmp ${kexec_offset}, $2f;
+            2:
+            mov {0:x}, {kcode_offset}
+            mov %ds, {0:x}
+            mov %es, {0:x}
+            mov %fs, {0:x}
+            mov %gs, {0:x}
+            mov %ss, {0:x}
+        "#,
+                out(reg) _,
+                kexec_offset = const 0x8,
+                kcode_offset = const 0x10,
+                options(nostack, nomem, att_syntax)
+            );
+        }
+
+        m
+    };
+    pub static ref IDT: InterruptDescriptorTable = {
+        let mut m: InterruptDescriptorTable = InterruptDescriptorTable::default();
+        unsafe {
+            m.divide_error
+                .set_handler(handlers::divide_error_handler as _);
+            m.debug.set_handler(handlers::debug_handler as _);
+
+            m[34].set_handler(handlers::keyboard_handler as _);
+            m[35].set_handler(handlers::keyboard_handler as _);
+            m[36].set_handler(handlers::keyboard_handler as _);
+            m[37].set_handler(handlers::keyboard_handler as _);
+            m[38].set_handler(handlers::keyboard_handler as _);
+            m[39].set_handler(handlers::keyboard_handler as _);
+            m[40].set_handler(handlers::keyboard_handler as _);
+            m[41].set_handler(handlers::keyboard_handler as _);
+            m[42].set_handler(handlers::keyboard_handler as _);
+            m[43].set_handler(handlers::keyboard_handler as _);
+
+            m.external_load(0x1000);
+            // sti();
+        }
+        m
+    };
 }

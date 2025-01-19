@@ -1,10 +1,11 @@
-use super::DescriptorTablePointer;
-use super::PrivilegeRings;
-use crate::instructions::tables::lgdt;
 use core::fmt;
 use core::mem;
 use core::ops::{Index, IndexMut};
 use core::ptr;
+
+use super::DescriptorTablePointer;
+use super::PrivilegeRings;
+use crate::instructions::tables::lgdt;
 
 /// Maximum number of GDT entries that can be stored in the stack
 ///
@@ -21,12 +22,12 @@ const GDT_LIMIT: usize = 7;
 #[repr(C, packed)]
 pub struct Entry
 {
-    limit_lower: u16,
-    base_lower:  u16,
-    base_mid:    u8,
-    access:      EntryAccess,
-    flags:       EntryFlags,
-    base_upper:  u8,
+    pub limit_lower: u16,
+    pub base_lower:  u16,
+    pub base_mid:    u8,
+    pub access:      EntryAccess,
+    pub flags:       EntryFlags,
+    pub base_upper:  u8,
 }
 
 impl Default for Entry
@@ -69,7 +70,7 @@ impl Entry
     /// - Zero base address
     /// - Present, readable segments (access: 0x92)
     /// - 4KB granularity, 32-bit protected mode (flags: 0xCF)
-    const FM_COMMUN: Self = Self {
+    pub const FM_COMMUN: Self = Self {
         limit_lower: 0xFFFF,
         base_lower:  0x0000,
         base_mid:    0x00,
@@ -82,7 +83,7 @@ impl Entry
     ///
     /// The limit is split between limit_lower (16 bits) and flags (4 bits)
     #[inline]
-    fn wr_limit(
+    pub fn wr_limit(
         &mut self,
         limit: u32,
     )
@@ -95,7 +96,7 @@ impl Entry
     ///
     /// Combines the lower 16 bits from limit_lower with upper 4 bits from flags
     #[inline]
-    fn rd_limit(&self) -> u32
+    pub fn rd_limit(&self) -> u32
     {
         let mut limit: u32;
         limit = self.flags.rd_limit() as u32;
@@ -110,7 +111,7 @@ impl Entry
     /// Splits the address across base_lower (16 bits), base_mid (8 bits),
     /// and base_upper (8 bits)
     #[inline]
-    fn wr_base(
+    pub fn wr_base(
         &mut self,
         base: u32,
     )
@@ -124,7 +125,7 @@ impl Entry
     ///
     /// Combines base_upper, base_mid and base_lower into a single address
     #[inline]
-    fn rd_base(&self) -> u32
+    pub fn rd_base(&self) -> u32
     {
         let mut base: u32;
         base = self.base_upper as u32;
@@ -171,7 +172,7 @@ impl EntryFlags
 {
     /// Writes the upper 4 bits of the segment limit
     #[inline]
-    fn wr_limit(
+    pub fn wr_limit(
         &mut self,
         v: u8,
     )
@@ -181,11 +182,11 @@ impl EntryFlags
 
     /// Reads the upper 4 bits of the segment limit
     #[inline]
-    fn rd_limit(&self) -> u8 { (self.0 & 0xF) as _ }
+    pub fn rd_limit(&self) -> u8 { (self.0 & 0xF) as _ }
 
     /// Sets granularity bit (0=1B blocks, 1=4KB blocks)
     #[inline]
-    fn wr_granuality(
+    pub fn wr_granuality(
         &mut self,
         b: bool,
     )
@@ -195,11 +196,11 @@ impl EntryFlags
 
     /// Gets granularity bit (0=1B blocks, 1=4KB blocks)
     #[inline]
-    fn rd_granuality(&self) -> bool { ((self.0 >> 7) & 0x1) != 0 }
+    pub fn rd_granuality(&self) -> bool { ((self.0 >> 7) & 0x1) != 0 }
 
     /// Sets size flag (0=16-bit, 1=32-bit)
     #[inline]
-    fn wr_sizeflag(
+    pub fn wr_sizeflag(
         &mut self,
         b: bool,
     )
@@ -209,11 +210,11 @@ impl EntryFlags
 
     /// Gets size flag (0=16-bit, 1=32-bit)
     #[inline]
-    fn rd_sizeflag(&self) -> bool { ((self.0 >> 6) & 0x1) != 0 }
+    pub fn rd_sizeflag(&self) -> bool { ((self.0 >> 6) & 0x1) != 0 }
 
     /// Sets long mode flag (1=64-bit segment)
     #[inline]
-    fn wr_longmode(
+    pub fn wr_longmode(
         &mut self,
         b: bool,
     )
@@ -223,7 +224,7 @@ impl EntryFlags
 
     /// Gets long mode flag (1=64-bit segment)
     #[inline]
-    fn rd_longmode(&self) -> bool { ((self.0 >> 5) & 0x1) != 0 }
+    pub fn rd_longmode(&self) -> bool { ((self.0 >> 5) & 0x1) != 0 }
 }
 
 /// GDT entry access byte controlling segment permissions and properties
@@ -267,7 +268,7 @@ impl EntryAccess
 {
     /// Set the present bit (1=segment is present in memory)
     #[inline]
-    fn wr_present(
+    pub fn wr_present(
         &mut self,
         present: bool,
     )
@@ -277,11 +278,11 @@ impl EntryAccess
 
     /// Get the present bit (1=segment is present in memory)
     #[inline]
-    fn rd_present(&self) -> bool { ((self.0 >> 7) & 0x1) != 0 }
+    pub fn rd_present(&self) -> bool { ((self.0 >> 7) & 0x1) != 0 }
 
     /// Set the descriptor privilege level (DPL)
     #[inline]
-    fn wr_dpl(
+    pub fn wr_dpl(
         &mut self,
         ring: PrivilegeRings,
     )
@@ -291,11 +292,11 @@ impl EntryAccess
 
     /// Get the descriptor privilege level (DPL)
     #[inline]
-    fn rd_dpl(&self) -> PrivilegeRings { PrivilegeRings::from_u8((self.0 >> 5) as u8 & 0x3) }
+    pub fn rd_dpl(&self) -> PrivilegeRings { PrivilegeRings::from_u8((self.0 >> 5) as u8 & 0x3) }
 
     /// Set the segment type (0=system, 1=code/data)
     #[inline]
-    fn wr_segtype(
+    pub fn wr_segtype(
         &mut self,
         b: bool,
     )
@@ -305,11 +306,11 @@ impl EntryAccess
 
     /// Get the segment type (0=system, 1=code/data)
     #[inline]
-    fn rd_segtype(&self) -> bool { ((self.0 >> 4) & 0x1) != 0 }
+    pub fn rd_segtype(&self) -> bool { ((self.0 >> 4) & 0x1) != 0 }
 
     /// Set the executable bit (1=code segment is executable)
     #[inline]
-    fn wr_executable(
+    pub fn wr_executable(
         &mut self,
         b: bool,
     )
@@ -319,11 +320,11 @@ impl EntryAccess
 
     /// Get the executable bit (1=code segment is executable)
     #[inline]
-    fn rd_executable(&self) -> bool { ((self.0 >> 3) & 0x1) != 0 }
+    pub fn rd_executable(&self) -> bool { ((self.0 >> 3) & 0x1) != 0 }
 
     /// Set the direction/conforming bit
     #[inline]
-    fn wr_direction(
+    pub fn wr_direction(
         &mut self,
         b: bool,
     )
@@ -333,12 +334,12 @@ impl EntryAccess
 
     /// Get the direction/conforming bit
     #[inline]
-    fn rd_direction(&self) -> bool { ((self.0 >> 2) & 0x1) != 0 }
+    pub fn rd_direction(&self) -> bool { ((self.0 >> 2) & 0x1) != 0 }
 
     /// Set the readable bit (1=code segment is readable, data segment is
     /// writable)
     #[inline]
-    fn wr_readable(
+    pub fn wr_readable(
         &mut self,
         b: bool,
     )
@@ -349,11 +350,11 @@ impl EntryAccess
     /// Get the readable bit (1=code segment is readable, data segment is
     /// writable)
     #[inline]
-    fn rd_readable(&self) -> bool { ((self.0 >> 1) & 0x1) != 0 }
+    pub fn rd_readable(&self) -> bool { ((self.0 >> 1) & 0x1) != 0 }
 
     /// Set the accessed bit (1=segment has been accessed)
     #[inline]
-    fn wr_access(
+    pub fn wr_access(
         &mut self,
         b: bool,
     )
@@ -363,7 +364,7 @@ impl EntryAccess
 
     /// Get the accessed bit (1=segment has been accessed)
     #[inline]
-    fn rd_access(&self) -> bool { (self.0 & 0x1) != 0 }
+    pub fn rd_access(&self) -> bool { (self.0 & 0x1) != 0 }
 }
 
 /// Global Descriptor Table (GDT) structure containing segment descriptors
@@ -373,16 +374,17 @@ impl EntryAccess
 /// - Kernel segments (code, data, stack)
 /// - User segments (code, data, stack)
 /// - Additional descriptors array
+#[repr(C, align(16))]
 pub struct GlobalDescriptorTable
 {
-    null:         Entry,
-    kernel_code:  Entry,
-    kernel_data:  Entry,
-    kernel_stack: Entry,
-    user_code:    Entry,
-    user_data:    Entry,
-    user_stack:   Entry,
-    descriptors:  [Entry; GDT_LIMIT - 7],
+    null:             Entry,
+    pub kernel_code:  Entry,
+    pub kernel_data:  Entry,
+    pub kernel_stack: Entry,
+    pub user_code:    Entry,
+    pub user_data:    Entry,
+    pub user_stack:   Entry,
+    pub descriptors:  [Entry; GDT_LIMIT - 7],
 }
 
 impl Default for GlobalDescriptorTable
@@ -500,51 +502,9 @@ impl IndexMut<u16> for GlobalDescriptorTable
     }
 }
 
-/// Sets up the Global Descriptor Table (GDT) with standard segment descriptors
-///
-/// Configures:
-/// - Kernel segments (code, data, stack) with Ring0 privileges
-/// - User segments (code, data, stack) with Ring3 privileges
-/// - Loads the GDT at physical address 0x800
-///
-/// # Safety
-/// This function is unsafe because it:
-/// - Writes to raw memory at address 0x800
-/// - Modifies critical CPU state via GDT loading
-#[unsafe(no_mangle)]
-pub fn setup()
-{
-    let mut gdt: GlobalDescriptorTable = GlobalDescriptorTable::default();
-    unsafe {
-        gdt.kernel_code = Entry::FM_COMMUN;
-        gdt.kernel_code.access.wr_executable(true);
-        gdt.kernel_code.access.wr_dpl(PrivilegeRings::Ring0);
-
-        gdt.kernel_data = Entry::FM_COMMUN;
-        gdt.kernel_data.access.wr_dpl(PrivilegeRings::Ring0);
-
-        gdt.kernel_stack = Entry::FM_COMMUN;
-        gdt.kernel_stack.access.wr_dpl(PrivilegeRings::Ring0);
-
-        gdt.user_code = Entry::FM_COMMUN;
-        gdt.user_code.access.wr_executable(true);
-        gdt.user_code.access.wr_dpl(PrivilegeRings::Ring3);
-
-        gdt.user_data = Entry::FM_COMMUN;
-        gdt.user_data.access.wr_dpl(PrivilegeRings::Ring3);
-
-        gdt.user_stack = Entry::FM_COMMUN;
-        gdt.user_stack.access.wr_dpl(PrivilegeRings::Ring3);
-
-        gdt.external_load(0x800);
-    }
-}
-
 #[test_case]
 fn gdt_test()
 {
-    setup();
-
     unsafe {
         assert_eq!(*(0x800 as *mut u64).offset(0), 0x00u64);
         assert_eq!(*(0x800 as *mut u64).offset(1), 0x00cf9a000000ffffu64);

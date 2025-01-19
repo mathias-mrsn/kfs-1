@@ -97,7 +97,8 @@ pub extern "C" fn kernel_main(multiboot_magic: u32) -> !
         panic!("hi")
     }
 
-    gdt::setup();
+    lazy_static::initialize(&cpu::GDT);
+    lazy_static::initialize(&cpu::IDT);
 
     #[cfg(test)]
     kernel_maintest();
@@ -106,23 +107,30 @@ pub extern "C" fn kernel_main(multiboot_magic: u32) -> !
     let mut vga: vgac::VgaConsole = vgac::VgaConsole::new(
         vgac::VGAColor::White,
         vgac::VGAColor::Black,
-        vgac::Resolution::R120_50,
+        vgac::Resolution::R80_25,
         vgac::MemoryRanges::Small,
         Some(vgac::CursorTypes::Full),
     );
 
-    for i in 0..50 {
-        writeln!(vga, "{}", i).unwrap();
-    }
+    writeln!(vga, "{}", include_str!(".assets/header.txt")).unwrap();
+
+    // for i in 0..50 {
+    //     writeln!(vga, "{}", i).unwrap();
+    // }
 
     // let i = 0;
     //
     // writeln!(vga, "{:#x}", ptr::addr_of!(i) as usize).unwrap();
     // writeln!(vga, "{:#x}", &i as *const _ as usize).unwrap();
 
-    // unsafe {
-    //     write!(vga, "gdt {:#034b}", instructions::registers::rdcr0());
-    // }
+    let cpuid;
+    unsafe {
+        cpuid = core::arch::x86::__cpuid(1);
+    }
+
+    unsafe {
+        write!(vga, "idt {:#b}", cpuid.edx);
+    }
 
     loop {}
 }

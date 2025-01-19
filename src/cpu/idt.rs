@@ -7,6 +7,7 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::mem;
 use core::ops::{Index, IndexMut};
+use core::ptr;
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy)]
@@ -143,7 +144,7 @@ impl<T> Entry<T>
     {
         self.offset_lower = (handler as u32 & 0xFFFF) as u16;
         self.segment_selector = rdcs();
-        self._reserved = 0;
+        self._reserved = 0u8;
         self.options.wr_present(true);
         self.options.wr_gate_type(GateTypes::InterruptGate32);
         self.offset_high = ((handler as u32 >> 16) & 0xFFFF) as u16;
@@ -168,6 +169,7 @@ impl<T> fmt::Debug for Entry<T>
     }
 }
 
+#[repr(C, align(16))]
 pub struct InterruptDescriptorTable
 {
     pub divide_error:                Entry<Handler>,
@@ -243,8 +245,34 @@ impl InterruptDescriptorTable
     {
         DescriptorTablePointer {
             limit: (mem::size_of::<Self>() - 1) as u16,
-            base:  self as *const Self as *const (),
+            base:  ptr::addr_of!(*self) as _,
         }
+    }
+
+    /// Copies the GDT to a specific memory address and loads it
+    ///
+    /// # Safety
+    /// This function is unsafe because:
+    /// - It performs raw memory operations
+    /// - The target address must be valid and properly aligned
+    /// - Loading an invalid GDT can cause undefined behavior
+    pub unsafe fn external_load(
+        &self,
+        address: u32,
+    )
+    {
+        let size: usize = mem::size_of::<Self>();
+
+        unsafe {
+            ptr::copy::<u8>(ptr::addr_of!(*self) as _, address as _, size);
+        }
+
+        let ptr: DescriptorTablePointer = DescriptorTablePointer {
+            limit: (size - 1) as u16,
+            base:  address as _,
+        };
+
+        unsafe { lidt(&ptr) };
     }
 }
 
