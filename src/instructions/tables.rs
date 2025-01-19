@@ -3,10 +3,6 @@ use core::arch::asm;
 
 /// Stores the current Global Descriptor Table Register (GDTR) value.
 ///
-/// This function executes the SGDT instruction to retrieve the current GDT
-/// limit and base address. Unlike LGDT, this operation is allowed at any
-/// privilege level.
-///
 /// # Returns
 /// Returns a `DescriptorTablePointer` containing the current GDT's limit and
 /// base address.
@@ -25,17 +21,10 @@ pub fn sgdt() -> DescriptorTablePointer
 
 /// Loads a new Global Descriptor Table (GDT).
 ///
-/// This function executes the LGDT instruction to set up a new GDT using the
-/// provided descriptor table pointer.
-///
 /// # Safety
 /// This function is unsafe because:
 /// - Loading an invalid GDT can cause system crashes
 /// - It can break memory segmentation if configured incorrectly
-///
-/// # Arguments
-/// * `ptr` - Reference to a `DescriptorTablePointer` containing the new GDT's
-///   limit and base address
 #[unsafe(no_mangle)]
 #[inline(always)]
 pub unsafe fn lgdt(ptr: &DescriptorTablePointer)
@@ -45,10 +34,34 @@ pub unsafe fn lgdt(ptr: &DescriptorTablePointer)
     }
 }
 
+/// Loads a new Interrupt Descriptor Table (IDT)
+///
+/// # Safety
+/// This function is unsafe because:
+/// - Loading an invalid IDT can cause system crashes
+/// - It can break interrupt handling if configured incorrectly
 #[inline(always)]
 pub unsafe fn lidt(ptr: &DescriptorTablePointer)
 {
     unsafe {
         asm!(" lidt [{}] ", in(reg) ptr, options(readonly, nostack, preserves_flags));
     }
+}
+
+/// Stores the current Interrupt Descriptor Table Register (IDTR) value
+///
+/// # Returns
+/// Returns a `DescriptorTablePointer` containing the current IDT's limit and
+/// base address
+#[inline(always)]
+pub fn sidt() -> DescriptorTablePointer
+{
+    let mut idt: DescriptorTablePointer = DescriptorTablePointer {
+        limit: 0,
+        base:  0x00 as _,
+    };
+    unsafe {
+        asm!(" sidt [{}] ", in(reg) &mut idt, options(nostack, preserves_flags));
+    }
+    idt
 }

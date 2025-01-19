@@ -1,15 +1,8 @@
 use core::arch::asm;
 
-/// Reads the CR0 control register value.
+/// Reads the CR0 (Control Register 0) register value
 ///
-/// The CR0 register contains system control flags that control operating mode
-/// and states of the processor, including protected mode enable, paging, etc.
-///
-/// # Safety
-/// This function is unsafe because reading CR0:
-/// - Requires privileged access level
-/// - Can affect system-wide CPU operation mode
-/// - Should only be used in kernel-level code
+/// Returns the current control register 0 value as a 32-bit value
 #[inline(always)]
 pub fn rdcr0() -> u32
 {
@@ -23,6 +16,9 @@ pub fn rdcr0() -> u32
     out
 }
 
+/// Reads the CS (Code Segment) register value
+///
+/// Returns the current code segment selector as a 16-bit value
 #[inline]
 pub fn rdcs() -> u16
 {
