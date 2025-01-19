@@ -11,12 +11,27 @@ use core::arch::asm;
 /// - Can affect system-wide CPU operation mode
 /// - Should only be used in kernel-level code
 #[inline(always)]
-pub unsafe fn rdcr0() -> u32
+pub fn rdcr0() -> u32
 {
     let out: u32;
-    asm!("mov {:e}, cr0 ",
-        out(reg) out,
-        options(readonly, nostack, preserves_flags)
-    );
+    unsafe {
+        asm!("mov {:e}, cr0",
+            out(reg) out,
+            options(readonly, nostack, preserves_flags)
+        );
+    }
+    out
+}
+
+#[inline]
+pub fn rdcs() -> u16
+{
+    let out: u16;
+    unsafe {
+        asm!("mov {:x}, cs",
+            out(reg) out,
+            options(readonly, nostack, preserves_flags)
+        );
+    }
     out
 }

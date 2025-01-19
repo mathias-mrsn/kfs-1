@@ -1,4 +1,4 @@
-use crate::cpu::gdt::DescriptorTablePointer;
+use crate::cpu::DescriptorTablePointer;
 use core::arch::asm;
 
 /// Stores the current Global Descriptor Table Register (GDTR) value.
@@ -36,10 +36,19 @@ pub fn sgdt() -> DescriptorTablePointer
 /// # Arguments
 /// * `ptr` - Reference to a `DescriptorTablePointer` containing the new GDT's
 ///   limit and base address
+#[unsafe(no_mangle)]
 #[inline(always)]
 pub unsafe fn lgdt(ptr: &DescriptorTablePointer)
 {
     unsafe {
         asm!(" lgdt [{}] ", in(reg) ptr, options(readonly, nostack, preserves_flags));
+    }
+}
+
+#[inline(always)]
+pub unsafe fn lidt(ptr: &DescriptorTablePointer)
+{
+    unsafe {
+        asm!(" lidt [{}] ", in(reg) ptr, options(readonly, nostack, preserves_flags));
     }
 }

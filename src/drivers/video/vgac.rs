@@ -889,6 +889,4 @@ fn test_memory_bounderies()
     }
 
     writeln!(vga_l, "test").unwrap();
-
-    assert_eq!(0, 1);
 }

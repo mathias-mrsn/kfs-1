@@ -1,387 +1,458 @@
+use super::DescriptorTablePointer;
+use super::PrivilegeRings;
 use crate::instructions::tables::lgdt;
-use bitflags::bitflags;
-use core::arch::asm;
+use core::fmt;
 use core::mem;
+use core::ops::{Index, IndexMut};
+use core::ptr;
 
-/// A structure representing a pointer to a descriptor table (GDT/IDT)
-///
-/// This structure matches the format required by the LGDT and LIDT instructions
-/// in x86 architecture. It contains both the size limit and base address of the
-/// descriptor table.
-///
-/// # Fields
-///
-/// * `limit` - The size of the descriptor table minus 1 (maximum size is 65535
-///   bytes)
-/// * `base` - A pointer to the start of the descriptor table in memory
-///
-/// # Memory Layout
-///
-/// The structure is marked with `#[repr(C, packed)]` to ensure:
-/// * No padding bytes are added between fields
-/// * The memory layout matches the CPU's expected format
-///
-/// # Safety
-///
-/// This structure is primarily used in unsafe contexts when loading descriptor
-/// tables via CPU instructions. The caller must ensure:
-/// * The base pointer points to a valid descriptor table
-/// * The limit accurately represents the table size minus 1
-/// * The structure is properly aligned when used
-#[derive(Debug)]
+/// Warning: This variable is tmp stored in stack so it must not be higher than
+/// STACK_SIZE
+const GDT_LIMIT: usize = 7;
+
+#[derive(Copy, Clone)]
 #[repr(C, packed)]
-pub struct DescriptorTablePointer
+pub struct Entry
 {
-    pub limit: u16,
-    pub base:  *const (),
+    limit_lower: u16,
+    base_lower:  u16,
+    base_mid:    u8,
+    access:      EntryAccess,
+    flags:       EntryFlags,
+    base_upper:  u8,
 }
 
-/// A structure representing a descriptor table (GDT/IDT) with a configurable
-/// size
-///
-/// This structure manages a table of segment or interrupt descriptors in
-/// memory. Each descriptor is stored as a 64-bit value, and the table can hold
-/// up to `M` entries.
-///
-/// # Type Parameters
-///
-/// * `M` - The maximum number of entries in the table (default: 1) Must be > 0
-///   and <= 8192 (constrained by AssertTableLimit)
-///
-/// # Fields
-///
-/// * `table` - An array of 64-bit descriptors (segment or gate descriptors)
-/// * `len` - The current number of entries in the table
-///
-/// # Examples
-///
-/// ```rust
-/// // Create a GDT with space for 7 entries
-/// let mut gdt: DescriptorTable<7> = DescriptorTable::new();
-/// gdt.clear(); // Initialize with null descriptor
-/// gdt.push(descriptor); // Add a new descriptor
-/// gdt.load(); // Load the GDT into the CPU
-/// ```
-///
-/// # Safety
-///
-/// This structure is used to define CPU protection mechanisms:
-/// * The first entry (index 0) must be a null descriptor
-/// * Descriptors must be properly formatted according to CPU requirements
-/// * The table must be properly aligned when loaded into the CPU
-#[derive(Debug)]
-pub struct DescriptorTable<const M: usize = 1>
+impl Default for Entry
 {
-    table: [u64; M],
-    len:   usize,
-}
-
-/// Compile-time validator for descriptor table size
-///
-/// Used as a zero-sized type to enforce size constraints on descriptor tables:
-/// * Minimum size: 1 entry
-/// * Maximum size: 8192 entries (65536 bytes)
-struct AssertTableLimit<const M: usize>;
-
-impl<const M: usize> AssertTableLimit<M>
-{
-    const OK: usize = {
-        assert!(M > 0, "GDT need at least 1 entry");
-        assert!(
-            M <= 8192,
-            "GDT can be up to 65536 bytes in length (8192 entries)"
-        );
-        0
-    };
-}
-
-impl<const M: usize> DescriptorTable<M>
-where
-    [(); AssertTableLimit::<M>::OK]:,
-{
-    /// Initializes the descriptor table with a null descriptor.
-    ///
-    /// This method:
-    /// * Fills the entire table with zeros
-    /// * Sets the length to 1 (accounting for the required null descriptor at
-    ///   index 0)
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// let mut gdt: DescriptorTable<3> = DescriptorTable::new();
-    /// gdt.clear(); // Initialize with null descriptor
-    /// ```
-    pub fn clear(&mut self)
+    fn default() -> Self
     {
-        self.table.fill(0);
-        self.len = 1;
-    }
-
-    /// Adds a new descriptor to the table.
-    ///
-    /// # Arguments
-    ///
-    /// * `descriptor` - A 64-bit value representing the segment descriptor
-    ///
-    /// # Panics
-    ///
-    /// Panics if the table is already full (len >= M)
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// gdt.push(DescriptorBits::KERNEL_CODE.bits());
-    /// ```
-    pub fn push(
-        &mut self,
-        descriptor: u64,
-    )
-    {
-        assert!(self.len < M, "GDT is already full");
-        self.table[self.len] = descriptor;
-        self.len += 1;
-    }
-
-    /// Adds multiple descriptors to the table.
-    ///
-    /// # Arguments
-    ///
-    /// * `descriptors` - A slice of 64-bit descriptor values to add
-    ///
-    /// # Panics
-    ///
-    /// Panics if adding all descriptors would exceed the table's capacity
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// gdt.fill(&[
-    ///     DescriptorBits::KERNEL_CODE.bits(),
-    ///     DescriptorBits::KERNEL_DATA.bits(),
-    /// ]);
-    /// ```
-    pub fn fill(
-        &mut self,
-        descriptors: &[u64],
-    )
-    {
-        for &descriptor in descriptors {
-            self.push(descriptor);
+        Self {
+            limit_lower: 0x00,
+            base_lower:  0x00,
+            base_mid:    0x00,
+            access:      EntryAccess::default(),
+            flags:       EntryFlags::default(),
+            base_upper:  0x00,
         }
     }
+}
 
-    /// Loads the descriptor table into the CPU using the LGDT instruction.
-    ///
-    /// # Safety
-    ///
-    /// This method is safe to call, but it performs an unsafe operation
-    /// internally as it directly interfaces with CPU instructions. The
-    /// caller must ensure:
-    /// * The table contains valid descriptors
-    /// * The first entry is a null descriptor
-    /// * The table is properly aligned
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// gdt.clear();
-    /// gdt.fill(&[/* valid descriptors */]);
-    /// gdt.load(); // Load into CPU
-    /// ```
-    pub fn load(&self)
+impl fmt::Debug for Entry
+{
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result
     {
-        let ptr = self.as_ptr();
-        unsafe { lgdt(&ptr) };
+        f.debug_struct("Entry")
+            .field("Base", &format_args!("{:#x}", self.rd_base()))
+            .field("Limit", &format_args!("{:#x}", self.rd_limit()))
+            .field("Flags", &format_args!("{:?}", self.flags))
+            .field("Access", &format_args!("{:?}", self.access))
+            .finish()
+    }
+}
+
+impl Entry
+{
+    /// Commun flags between Flat Model Descriptors
+    const FM_COMMUN: Self = Self {
+        limit_lower: 0xFFFF,
+        base_lower:  0x0000,
+        base_mid:    0x00,
+        access:      EntryAccess(0x92),
+        flags:       EntryFlags(0xCF),
+        base_upper:  0x00,
+    };
+
+    #[inline]
+    fn wr_limit(
+        &mut self,
+        limit: u32,
+    )
+    {
+        self.limit_lower = (limit & 0xFFFF) as u16;
+        self.flags.wr_limit(((limit >> 16) & 0xF) as u8);
     }
 
-    /// Creates a pointer to the descriptor table suitable for CPU instructions.
-    ///
-    /// Returns a `DescriptorTablePointer` containing:
-    /// * The size of the table minus 1 (limit)
-    /// * A pointer to the table's base address
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// let ptr = gdt.as_ptr();
-    /// unsafe { lgdt(&ptr) };
-    /// ```
+    #[inline]
+    fn rd_limit(&self) -> u32
+    {
+        let mut limit: u32;
+        limit = self.flags.rd_limit() as u32;
+        limit <<= 4;
+        limit += self.limit_lower as u32;
+
+        limit
+    }
+
+    #[inline]
+    fn wr_base(
+        &mut self,
+        base: u32,
+    )
+    {
+        self.base_lower = (base & 0xFFFF) as u16;
+        self.base_mid = ((base >> 16) & 0xFF) as u8;
+        self.base_upper = ((base >> 24) & 0xFF) as u8;
+    }
+
+    #[inline]
+    fn rd_base(&self) -> u32
+    {
+        let mut base: u32;
+        base = self.base_upper as u32;
+        base <<= 8;
+        base += self.base_mid as u32;
+        base <<= 8;
+        base += self.base_lower as u32;
+
+        base
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct EntryFlags(u8);
+
+impl Default for EntryFlags
+{
+    fn default() -> Self { Self(0) }
+}
+
+impl fmt::Debug for EntryFlags
+{
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result
+    {
+        f.debug_struct("EntryOptions")
+            .field("Granuality", &self.rd_granuality())
+            .field("Size Flag", &self.rd_sizeflag())
+            .field("Long Mode", &self.rd_longmode())
+            .finish()
+    }
+}
+
+impl EntryFlags
+{
+    #[inline]
+    fn wr_limit(
+        &mut self,
+        v: u8,
+    )
+    {
+        self.0 = (self.0 & 0xF0) | ((v as u8) & 0xF);
+    }
+
+    #[inline]
+    fn rd_limit(&self) -> u8 { (self.0 & 0xF) as _ }
+
+    #[inline]
+    fn wr_granuality(
+        &mut self,
+        b: bool,
+    )
+    {
+        self.0 = (self.0 & 0x7F) | ((b as u8) << 7);
+    }
+
+    #[inline]
+    fn rd_granuality(&self) -> bool { ((self.0 >> 7) & 0x1) != 0 }
+
+    #[inline]
+    fn wr_sizeflag(
+        &mut self,
+        b: bool,
+    )
+    {
+        self.0 = (self.0 & 0xBF) | ((b as u8) << 6);
+    }
+
+    #[inline]
+    fn rd_sizeflag(&self) -> bool { ((self.0 >> 6) & 0x1) != 0 }
+
+    #[inline]
+    fn wr_longmode(
+        &mut self,
+        b: bool,
+    )
+    {
+        self.0 = (self.0 & 0xDF) | ((b as u8) << 5);
+    }
+
+    #[inline]
+    fn rd_longmode(&self) -> bool { ((self.0 >> 5) & 0x1) != 0 }
+}
+
+#[derive(Copy, Clone)]
+pub struct EntryAccess(u8);
+
+impl Default for EntryAccess
+{
+    fn default() -> Self { Self(0) }
+}
+
+impl fmt::Debug for EntryAccess
+{
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result
+    {
+        f.debug_struct("EntryOptions")
+            .field("Present Bit", &self.rd_present())
+            .field("DPL", &format_args!("{:?}", self.rd_dpl()))
+            .field("Segment Type", &self.rd_segtype())
+            .field("Executable", &self.rd_executable())
+            .field("Direction", &self.rd_direction())
+            .field("Readable/Writable", &self.rd_readable())
+            .field("Access", &self.rd_access())
+            .finish()
+    }
+}
+
+impl EntryAccess
+{
+    #[inline]
+    fn wr_present(
+        &mut self,
+        present: bool,
+    )
+    {
+        self.0 = (self.0 & 0x7F) | ((present as u8) << 7);
+    }
+
+    #[inline]
+    fn rd_present(&self) -> bool { ((self.0 >> 7) & 0x1) != 0 }
+
+    #[inline]
+    fn wr_dpl(
+        &mut self,
+        ring: PrivilegeRings,
+    )
+    {
+        self.0 = (self.0 & 0x9F) | ((ring as u8) << 5);
+    }
+
+    #[inline]
+    fn rd_dpl(&self) -> PrivilegeRings { PrivilegeRings::from_u8((self.0 >> 5) as u8 & 0x3) }
+
+    #[inline]
+    fn wr_segtype(
+        &mut self,
+        b: bool,
+    )
+    {
+        self.0 = (self.0 & 0xEF) | ((b as u8) << 4);
+    }
+
+    #[inline]
+    fn rd_segtype(&self) -> bool { ((self.0 >> 4) & 0x1) != 0 }
+
+    #[inline]
+    fn wr_executable(
+        &mut self,
+        b: bool,
+    )
+    {
+        self.0 = (self.0 & 0xF7) | ((b as u8) << 3);
+    }
+
+    #[inline]
+    fn rd_executable(&self) -> bool { ((self.0 >> 3) & 0x1) != 0 }
+
+    #[inline]
+    fn wr_direction(
+        &mut self,
+        b: bool,
+    )
+    {
+        self.0 = (self.0 & 0xFB) | ((b as u8) << 2);
+    }
+
+    #[inline]
+    fn rd_direction(&self) -> bool { ((self.0 >> 2) & 0x1) != 0 }
+
+    #[inline]
+    fn wr_readable(
+        &mut self,
+        b: bool,
+    )
+    {
+        self.0 = (self.0 & 0xFD) | ((b as u8) << 1);
+    }
+
+    #[inline]
+    fn rd_readable(&self) -> bool { ((self.0 >> 1) & 0x1) != 0 }
+
+    #[inline]
+    fn wr_access(
+        &mut self,
+        b: bool,
+    )
+    {
+        self.0 = (self.0 & 0xFE) | (b as u8);
+    }
+
+    #[inline]
+    fn rd_access(&self) -> bool { (self.0 & 0x1) != 0 }
+}
+
+pub struct GlobalDescriptorTable
+{
+    null:         Entry,
+    kernel_code:  Entry,
+    kernel_data:  Entry,
+    kernel_stack: Entry,
+    user_code:    Entry,
+    user_data:    Entry,
+    user_stack:   Entry,
+    descriptors:  [Entry; GDT_LIMIT - 7],
+}
+
+impl Default for GlobalDescriptorTable
+{
+    fn default() -> Self
+    {
+        Self {
+            null:         Entry::default(),
+            kernel_code:  Entry::default(),
+            kernel_data:  Entry::default(),
+            kernel_stack: Entry::default(),
+            user_code:    Entry::default(),
+            user_data:    Entry::default(),
+            user_stack:   Entry::default(),
+            descriptors:  [Entry::default(); GDT_LIMIT - 7],
+        }
+    }
+}
+
+impl GlobalDescriptorTable
+{
+    pub fn clear(&mut self) { *self = Self::default(); }
+
+    pub unsafe fn load(&self)
+    {
+        let ptr = self.as_ptr();
+        lgdt(&ptr);
+    }
+
     pub fn as_ptr(&self) -> DescriptorTablePointer
     {
         DescriptorTablePointer {
-            limit: (self.len * mem::size_of::<u64>() - 1) as u16,
-            base:  self.table.as_ptr() as _,
+            limit: (mem::size_of::<Self>() - 1) as u16,
+            base:  self as *const Self as *const (),
+        }
+    }
+
+    pub unsafe fn external_load(
+        &self,
+        address: u32,
+    )
+    {
+        let size: usize = mem::size_of::<Self>();
+
+        unsafe {
+            ptr::copy::<u8>(ptr::addr_of!(*self) as _, address as _, size);
+        }
+
+        let ptr: DescriptorTablePointer = DescriptorTablePointer {
+            limit: (size - 1) as u16,
+            base:  address as _,
+        };
+
+        unsafe { lgdt(&ptr) };
+    }
+}
+
+impl Index<u16> for GlobalDescriptorTable
+{
+    type Output = Entry;
+
+    #[inline]
+    fn index(
+        &self,
+        index: u16,
+    ) -> &Self::Output
+    {
+        match index {
+            0 => panic!("cannot change the null entry"),
+            1 => &self.kernel_code,
+            2 => &self.kernel_data,
+            3 => &self.kernel_stack,
+            4 => &self.user_code,
+            5 => &self.user_data,
+            6 => &self.user_stack,
+            i @ 7..=8197 => &self.descriptors[usize::from(i) - 32],
+            _ => panic!("out of bounds"),
         }
     }
 }
 
-bitflags! {
-    /// Represents the various flags and bits used in GDT (Global Descriptor Table) entries.
-    /// These bits control segment characteristics, privileges, and other attributes.
-    #[derive(Debug, Clone, Copy)]
-    pub struct DescriptorBits: u64 {
-        /// Accessed bit. CPU sets this bit when the segment is accessed.
-        /// Used for debugging and virtual memory management.
-        const A = 1 << 40;
-
-        /// Read/Write bit. For data segments: writable bit.
-        /// For code segments: readable bit (execution-only if not set).
-        const RW = 1 << 41;
-
-        /// Direction/Conforming bit.
-        /// For data segments: segment grows down if set.
-        /// For code segments: code can be executed from lower privilege levels if set.
-        const DC = 1 << 42;
-
-        /// Executable bit. If set, code in this segment can be executed.
-        /// Indicates a code segment when set, data segment when clear.
-        const E = 1 << 43;
-
-        /// Descriptor type bit. Set for code or data segments,
-        /// clear for system segments.
-        const S = 1 << 44;
-
-        /// Descriptor Privilege Level 3 (User mode).
-        /// Highest ring level, least privileged.
-        const DPL_RING_3 = 3 << 45;
-
-        /// Descriptor Privilege Level 2.
-        /// Intermediate ring level.
-        const DPL_RING_2 = 2 << 45;
-
-        /// Descriptor Privilege Level 1.
-        /// Intermediate ring level.
-        const DPL_RING_1 = 1 << 45;
-
-        /// Present bit. Must be set for valid segments.
-        /// Clear for unused segment entries.
-        const P = 1 << 47;
-
-        /// Long-mode code flag. Set for 64-bit code segments.
-        /// Only valid for code segments.
-        const L = 1 << 53;
-
-        /// Default operation size bit.
-        /// For code segments: 1 = 32-bit, 0 = 16-bit.
-        /// For data segments: 1 = 32-bit stack operations.
-        const DB = 1 << 54;
-
-        /// Granularity bit. 0 = limit scaled by 1,
-        /// 1 = limit scaled by 4K (page granularity).
-        const G = 1 << 55;
-
-        /// Maximum segment limit value.
-        /// Represents the maximum addressable size when combined with granularity.
-        const LIMIT_MAX = 0x000F_0000_0000_FFFF;
+impl IndexMut<u16> for GlobalDescriptorTable
+{
+    #[inline]
+    fn index_mut(
+        &mut self,
+        index: u16,
+    ) -> &mut Self::Output
+    {
+        match index {
+            0 => panic!("cannot change the null entry"),
+            1 => &mut self.kernel_code,
+            2 => &mut self.kernel_data,
+            3 => &mut self.kernel_stack,
+            4 => &mut self.user_code,
+            5 => &mut self.user_data,
+            6 => &mut self.user_stack,
+            i @ 7..=8197 => &mut self.descriptors[usize::from(i) - 32],
+            _ => panic!("out of bounds"),
+        }
     }
 }
 
-impl DescriptorBits
+#[unsafe(no_mangle)]
+pub fn setup()
 {
-    /// Base configuration for data segments.
-    /// Includes:
-    /// * Segment bit (S)
-    /// * Present bit (P)
-    /// * Read/Write bit (RW)
-    /// * Accessed bit (A)
-    /// * Maximum segment limit
-    const _DATA: Self = Self::from_bits_truncate(
-        Self::S.bits() | Self::P.bits() | Self::RW.bits() | Self::A.bits() | Self::LIMIT_MAX.bits(),
-    );
+    let mut gdt: GlobalDescriptorTable = GlobalDescriptorTable::default();
+    unsafe {
+        gdt.kernel_code = Entry::FM_COMMUN;
+        gdt.kernel_code.access.wr_executable(true);
+        gdt.kernel_code.access.wr_dpl(PrivilegeRings::Ring0);
 
-    /// Base configuration for code segments.
-    /// Extends _DATA configuration with:
-    /// * Executable bit (E)
-    const _CODE: Self = Self::from_bits_truncate(Self::_DATA.bits() | Self::E.bits());
+        gdt.kernel_data = Entry::FM_COMMUN;
+        gdt.kernel_data.access.wr_dpl(PrivilegeRings::Ring0);
 
-    /// Kernel code segment descriptor.
-    /// Extends _CODE configuration with:
-    /// * Granularity bit (G) - 4K page granularity
-    /// * Default operation size bit (DB) - 32-bit operations
-    const KERNEL_CODE: Self =
-        Self::from_bits_truncate(Self::_CODE.bits() | Self::G.bits() | Self::DB.bits());
+        gdt.kernel_stack = Entry::FM_COMMUN;
+        gdt.kernel_stack.access.wr_dpl(PrivilegeRings::Ring0);
 
-    /// Kernel data segment descriptor.
-    /// Extends _DATA configuration with:
-    /// * Granularity bit (G) - 4K page granularity
-    /// * Default operation size bit (DB) - 32-bit operations
-    const KERNEL_DATA: Self =
-        Self::from_bits_truncate(Self::_DATA.bits() | Self::G.bits() | Self::DB.bits());
+        gdt.user_code = Entry::FM_COMMUN;
+        gdt.user_code.access.wr_executable(true);
+        gdt.user_code.access.wr_dpl(PrivilegeRings::Ring3);
 
-    /// Kernel stack segment descriptor.
-    /// Identical to KERNEL_DATA configuration
-    const KERNEL_STACK: Self = Self::KERNEL_DATA;
+        gdt.user_data = Entry::FM_COMMUN;
+        gdt.user_data.access.wr_dpl(PrivilegeRings::Ring3);
 
-    /// User code segment descriptor.
-    /// Extends KERNEL_CODE configuration with:
-    /// * DPL Ring 3 - User mode privilege level
-    const USER_CODE: Self =
-        Self::from_bits_truncate(Self::KERNEL_CODE.bits() | Self::DPL_RING_3.bits());
+        gdt.user_stack = Entry::FM_COMMUN;
+        gdt.user_stack.access.wr_dpl(PrivilegeRings::Ring3);
 
-    /// User data segment descriptor.
-    /// Extends KERNEL_DATA configuration with:
-    /// * DPL Ring 3 - User mode privilege level
-    const USER_DATA: Self =
-        Self::from_bits_truncate(Self::KERNEL_DATA.bits() | Self::DPL_RING_3.bits());
-
-    /// User stack segment descriptor.
-    /// Identical to USER_DATA configuration
-    const USER_STACK: Self = Self::USER_DATA;
+        gdt.external_load(0x800);
+    }
 }
 
-/// Sets up the Global Descriptor Table (GDT) and initializes segment registers
-///
-/// This function performs the following operations:
-/// 1. Creates a GDT with 7 entries at physical address 0x800
-/// 2. Initializes the GDT with kernel and user segment descriptors
-/// 3. Loads the GDT into the CPU
-/// 4. Updates all segment registers with appropriate selectors
-///
-/// # GDT Layout
-/// - Entry 0: Null descriptor (required by CPU)
-/// - Entry 1: Kernel code segment
-/// - Entry 2: Kernel data segment
-/// - Entry 3: Kernel stack segment
-/// - Entry 4: User code segment
-/// - Entry 5: User data segment
-/// - Entry 6: User stack segment
-///
-/// # Safety
-///
-/// This function is unsafe because it:
-/// - Writes to a raw pointer at a fixed memory address (0x800)
-/// - Directly manipulates CPU state through the GDT
-/// - Must be called only once during system initialization
-pub unsafe fn setup()
+#[test_case]
+fn gdt_test()
 {
-    pub static mut GDT: *mut DescriptorTable<7> = 0x800 as *mut DescriptorTable<7>;
+    setup();
 
-    (*GDT).clear();
-    (*GDT).fill(&[
-        DescriptorBits::KERNEL_CODE.bits(),
-        DescriptorBits::KERNEL_DATA.bits(),
-        DescriptorBits::KERNEL_DATA.bits(),
-        DescriptorBits::USER_CODE.bits(),
-        DescriptorBits::USER_DATA.bits(),
-        DescriptorBits::USER_DATA.bits(),
-    ]);
-    (*GDT).load();
-
-    asm!(
-        r#"
-            jmp ${kexec_offset}, $2f;
-            2:
-            mov {0:x}, {kcode_offset}
-            mov %ds, {0:x}
-            mov %es, {0:x}
-            mov %fs, {0:x}
-            mov %gs, {0:x}
-            mov %ss, {0:x}
-        "#,
-        out(reg) _,
-        kexec_offset = const 0x8,
-        kcode_offset = const 0x10,
-        options(nostack, nomem, att_syntax)
-    );
+    unsafe {
+        assert_eq!(*(0x800 as *mut u64).offset(0), 0x00u64);
+        assert_eq!(*(0x800 as *mut u64).offset(1), 0x00cf9a000000ffffu64);
+        assert_eq!(*(0x800 as *mut u64).offset(2), 0x00cf92000000ffffu64);
+        assert_eq!(*(0x800 as *mut u64).offset(3), 0x00cf92000000ffffu64);
+        assert_eq!(*(0x800 as *mut u64).offset(4), 0x00cffa000000ffffu64);
+        assert_eq!(*(0x800 as *mut u64).offset(5), 0x00cff2000000ffffu64);
+        assert_eq!(*(0x800 as *mut u64).offset(6), 0x00cff2000000ffffu64);
+    }
 }

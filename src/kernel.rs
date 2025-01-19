@@ -14,6 +14,7 @@
 #![feature(custom_test_frameworks)]
 #![test_runner(crate::test::test_runner)]
 #![reexport_test_harness_main = "kernel_maintest"]
+#![feature(abi_x86_interrupt)]
 
 mod controllers;
 mod cpu;
@@ -96,9 +97,7 @@ pub extern "C" fn kernel_main(multiboot_magic: u32) -> !
         panic!("hi")
     }
 
-    unsafe {
-        gdt::setup();
-    }
+    gdt::setup();
 
     #[cfg(test)]
     kernel_maintest();
@@ -115,6 +114,11 @@ pub extern "C" fn kernel_main(multiboot_magic: u32) -> !
     for i in 0..50 {
         writeln!(vga, "{}", i).unwrap();
     }
+
+    // let i = 0;
+    //
+    // writeln!(vga, "{:#x}", ptr::addr_of!(i) as usize).unwrap();
+    // writeln!(vga, "{:#x}", &i as *const _ as usize).unwrap();
 
     // unsafe {
     //     write!(vga, "gdt {:#034b}", instructions::registers::rdcr0());
