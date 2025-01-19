@@ -1,3 +1,5 @@
+use core::fmt;
+
 pub mod gdt;
 pub mod handlers;
 pub mod idt;
@@ -14,19 +16,10 @@ pub mod idt;
 ///   ///   bytes)
 /// * `base` - A pointer to the start of the descriptor table in memory
 ///
-/// # Memory Layout
-///
-/// The structure is marked with `#[repr(C, packed)]` to ensure:
-/// * No padding bytes are added between fields
-/// * The memory layout matches the CPU's expected format
-///
 /// # Safety
 ///
 /// This structure is primarily used in unsafe contexts when loading descriptor
-/// tables via CPU instructions. The caller must ensure:
-/// * The base pointer points to a valid descriptor table
-/// * The limit accurately represents the table size minus 1
-/// * The structure is properly aligned when used
+/// tables via CPU instructions.
 #[derive(Debug)]
 #[repr(C, packed)]
 pub struct DescriptorTablePointer
@@ -35,6 +28,16 @@ pub struct DescriptorTablePointer
     pub base:  *const (),
 }
 
+/// Represents x86 CPU privilege levels (rings)
+///
+/// Each ring represents a different privilege level, with Ring0 being the most
+/// privileged (kernel mode) and Ring3 being the least privileged (user mode).
+///
+/// # Values
+/// - `Ring0` (0x0): Kernel mode, highest privilege
+/// - `Ring1` (0x1): Reserved/unused in most systems
+/// - `Ring2` (0x2): Reserved/unused in most systems
+/// - `Ring3` (0x3): User mode, lowest privilege
 #[repr(u8)]
 #[derive(Debug, Clone, Copy)]
 pub enum PrivilegeRings
@@ -47,6 +50,13 @@ pub enum PrivilegeRings
 
 impl PrivilegeRings
 {
+    /// Converts a raw u8 value into a `PrivilegeRings` enum
+    ///
+    /// # Arguments
+    /// * `value` - A u8 value between 0 and 3
+    ///
+    /// # Panics
+    /// Panics if the value is not between 0 and 3
     fn from_u8(value: u8) -> Self
     {
         match value {
@@ -62,8 +72,15 @@ impl PrivilegeRings
     }
 }
 
-// TODO: Implement own fmt
-#[derive(Debug)]
+/// Represents the CPU state automatically pushed to the stack during an
+/// interrupt
+///
+/// # Fields
+/// * `eip` - Instruction pointer at interrupt
+/// * `cs` - Code segment at interrupt
+/// * `cflags` - CPU flags at interrupt
+/// * `esp` - Stack pointer at interrupt
+/// * `ss` - Stack segment at interrupt
 #[repr(C, packed)]
 pub struct InterruptStackFrame
 {
@@ -72,4 +89,27 @@ pub struct InterruptStackFrame
     cflags: u32,
     esp:    u32,
     ss:     u16,
+}
+
+impl fmt::Debug for InterruptStackFrame
+{
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result
+    {
+        let eip = self.eip;
+        let cs = self.cs;
+        let cflags = self.cflags;
+        let esp = self.esp;
+        let ss = self.ss;
+
+        f.debug_struct("InterruptStackFrame")
+            .field("eip", &format_args!("0x{:08x}", eip))
+            .field("cs", &format_args!("0x{:04x}", cs))
+            .field("cflags", &format_args!("0x{:08x}", cflags))
+            .field("esp", &format_args!("0x{:08x}", esp))
+            .field("ss", &format_args!("0x{:04x}", ss))
+            .finish()
+    }
 }
