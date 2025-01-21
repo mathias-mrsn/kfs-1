@@ -197,7 +197,7 @@ lazy_static! {
     pub static ref GDT: GlobalDescriptorTable = {
         let mut m: GlobalDescriptorTable = GlobalDescriptorTable::default();
 
-        cli();
+        // cli();
 
         unsafe {
             m.kernel_code = Entry::FM_COMMUN;

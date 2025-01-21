@@ -29,6 +29,8 @@ mod utils;
 use core::arch::naked_asm;
 use core::mem::MaybeUninit;
 
+use drivers::video::LOGGER;
+
 use crate::cpu::gdt;
 use crate::drivers::video::vgac;
 
@@ -99,20 +101,23 @@ pub extern "C" fn kernel_main(multiboot_magic: u32) -> !
 
     lazy_static::initialize(&cpu::GDT);
     lazy_static::initialize(&cpu::IDT);
+    let t = crate::cpu::apic::initialize();
 
     #[cfg(test)]
     kernel_maintest();
 
-    use core::fmt::Write;
-    let mut vga: vgac::VgaConsole = vgac::VgaConsole::new(
-        vgac::VGAColor::White,
-        vgac::VGAColor::Black,
-        vgac::Resolution::R80_25,
-        vgac::MemoryRanges::Small,
-        Some(vgac::CursorTypes::Full),
-    );
+    // LOGGER.lock().blank();
+    // println!("{}", include_str!(".assets/header.txt"));
 
-    writeln!(vga, "{}", include_str!(".assets/header.txt")).unwrap();
+    // let rsdp = apic::rsdp::search_on_bios();
+    // match rsdp {
+    //     Some(rsdp) => {
+    //         let rsdt = unsafe { &*(rsdp.get_rsdt()) };
+    //         let s = unsafe { rsdt.find_sdt(Signature::MADT) };
+    //         writeln!(vga, "RSDP found: {:?}", &s)
+    //     }
+    //     None => writeln!(vga, "RSDP not found"),
+    // };
 
     // for i in 0..50 {
     //     writeln!(vga, "{}", i).unwrap();
@@ -126,10 +131,6 @@ pub extern "C" fn kernel_main(multiboot_magic: u32) -> !
     let cpuid;
     unsafe {
         cpuid = core::arch::x86::__cpuid(1);
-    }
-
-    unsafe {
-        write!(vga, "idt {:#b}", cpuid.edx);
     }
 
     loop {}
