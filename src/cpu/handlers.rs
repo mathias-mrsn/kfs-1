@@ -155,5 +155,5 @@ pub extern "x86-interrupt" fn control_protection_handler(
 
 pub extern "x86-interrupt" fn keyboard_handler(stack_frame: InterruptStackFrame)
 {
-    panic!("EXCEPTION: VIRTUALIZATION\n{:#?}", stack_frame);
+    panic!("EXCEPTION: KEYBOARD\n{:#?}", stack_frame);
 }

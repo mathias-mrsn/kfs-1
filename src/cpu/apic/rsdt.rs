@@ -1,9 +1,6 @@
 use super::SDTHeader;
 use super::{SDT, SDTError};
-use core::ptr;
 use core::{mem, slice};
-
-use crate::println;
 
 #[repr(C, packed)]
 pub struct RSDT
@@ -27,7 +24,7 @@ impl SDT for RSDT
 
 impl RSDT
 {
-    pub unsafe fn entries(&self) -> impl Iterator<Item = &SDTHeader>
+    pub unsafe fn iter(&self) -> impl Iterator<Item = &SDTHeader>
     {
         let entry_count =
             (self.hdr.length - mem::size_of::<Self>() as u32) / mem::size_of::<u32>() as u32;
@@ -41,7 +38,7 @@ impl RSDT
 
     pub fn find_sdt<T: SDT>(&self) -> Option<&T>
     {
-        let mut entries = unsafe { self.entries() };
+        let mut entries = unsafe { self.iter() };
         let sdt = (entries.find(|sdt| sdt.signature == *T::SIGNATURE)).unwrap();
         return Some(unsafe { &*(sdt as *const _ as *const T) });
     }

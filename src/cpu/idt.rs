@@ -195,7 +195,8 @@ pub struct InterruptDescriptorTable
     pub virtualization:              Entry<Handler>,
     pub control_protection:          Entry<HandlerWithCode>,
     _intel_reserved2:                [Entry<Handler>; 31 - 22],
-    user_interrupts:                 [Entry<Handler>; 256 - 32],
+    commun_vectors:                  [Entry<Handler>; 204],
+    apic_smp_vectors:                [Entry<Handler>; 20],
 }
 
 impl Default for InterruptDescriptorTable
@@ -226,7 +227,8 @@ impl Default for InterruptDescriptorTable
             virtualization:              Entry::default(),
             control_protection:          Entry::default(),
             _intel_reserved2:            [Entry::default(); 31 - 22],
-            user_interrupts:             [Entry::default(); 256 - 32],
+            commun_vectors:              [Entry::default(); 204],
+            apic_smp_vectors:            [Entry::default(); 20],
         }
     }
 }
@@ -276,6 +278,7 @@ impl InterruptDescriptorTable
     }
 }
 
+/// WARN: Possible error in these two traits.
 impl Index<u8> for InterruptDescriptorTable
 {
     type Output = Entry<Handler>;
@@ -293,7 +296,8 @@ impl Index<u8> for InterruptDescriptorTable
                      directly use the variable assigned to this interruption in the IDT struct"
                 )
             }
-            i @ 32..=255 => &self.user_interrupts[usize::from(i) - 32],
+            i @ 32..=235 => &self.commun_vectors[usize::from(i) - 32],
+            i @ 236..=255 => &self.apic_smp_vectors[usize::from(i) - 236],
             i @ 15 | i @ 22..=31 => panic!("entry {} is reserved", i),
         }
     }
@@ -314,7 +318,8 @@ impl IndexMut<u8> for InterruptDescriptorTable
                      directly use the variable assigned to this interruption in the IDT struct"
                 )
             }
-            i @ 32..=255 => &mut self.user_interrupts[usize::from(i) - 32],
+            i @ 32..=235 => &mut self.commun_vectors[usize::from(i) - 32],
+            i @ 236..=255 => &mut self.apic_smp_vectors[usize::from(i) - 236],
             i @ 15 | i @ 22..=31 => panic!("entry {} is reserved", i),
         }
     }

@@ -249,6 +249,8 @@ lazy_static! {
                 .set_handler(handlers::divide_error_handler as _);
             m.debug.set_handler(handlers::debug_handler as _);
 
+            m[32].set_handler(handlers::keyboard_handler as _);
+            m[33].set_handler(handlers::keyboard_handler as _);
             m[34].set_handler(handlers::keyboard_handler as _);
             m[35].set_handler(handlers::keyboard_handler as _);
             m[36].set_handler(handlers::keyboard_handler as _);

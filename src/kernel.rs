@@ -26,6 +26,7 @@ mod qemu;
 mod test;
 mod utils;
 
+use core::arch::asm;
 use core::arch::naked_asm;
 use core::mem::MaybeUninit;
 
@@ -100,8 +101,8 @@ pub extern "C" fn kernel_main(multiboot_magic: u32) -> !
     }
 
     lazy_static::initialize(&cpu::GDT);
+    let _t = crate::cpu::apic::initialize();
     lazy_static::initialize(&cpu::IDT);
-    let t = crate::cpu::apic::initialize();
 
     #[cfg(test)]
     kernel_maintest();
@@ -128,10 +129,18 @@ pub extern "C" fn kernel_main(multiboot_magic: u32) -> !
     // writeln!(vga, "{:#x}", ptr::addr_of!(i) as usize).unwrap();
     // writeln!(vga, "{:#x}", &i as *const _ as usize).unwrap();
 
-    let cpuid;
-    unsafe {
-        cpuid = core::arch::x86::__cpuid(1);
-    }
+    // unsafe {
+    //     asm!("int 0x21");
+    // }
 
-    loop {}
+    // let cpuid;
+    // unsafe {
+    //     cpuid = core::arch::x86::__cpuid(1);
+    // }
+
+    loop {
+        unsafe {
+            asm!("hlt");
+        }
+    }
 }
