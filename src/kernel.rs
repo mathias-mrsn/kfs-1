@@ -75,7 +75,7 @@ pub static MULTIBOOT_HEADER: MultibootHeader = MultibootHeader {
 };
 
 #[used]
-#[unsafe(link_section = ".bootstrap_stack")]
+#[unsafe(link_section = ".bss")]
 static mut STACK: [MaybeUninit<u8>; STACK_SIZE] = MaybeUninit::uninit_array();
 
 #[unsafe(no_mangle)]
@@ -115,23 +115,28 @@ r#"
 .global _start
 _start:
     mov esp, offset {stack} + {stack_size} - 0xc0000000
+
+    // Push multiboot informations
     push ebx
     push eax
 
 
+    // Set cr3 to the address of the page table.
     mov eax, offset {PDT}
     mov cr3, eax
+
+    // Enable PSE (unknown why yet)
     mov eax, cr4
     or eax, 0x00000010
     mov cr4, eax
   
+    // Enable pagging
     mov eax, cr0
     or eax, 0x80010000
     mov cr0, eax
 
+    // Convert stack address from physical to virtual
     add esp, 0xc0000000
-
-
 
     call {kernel_main}
 "#,
