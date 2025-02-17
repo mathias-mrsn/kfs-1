@@ -1,8 +1,9 @@
 use super::DescriptorTablePointer;
 use super::InterruptStackFrame;
 use super::PrivilegeRings;
-use crate::instructions::registers::rdcs;
 use crate::instructions::tables::lidt;
+use crate::registers::RegisterAccessor;
+use crate::registers::cs::CS;
 use core::fmt;
 use core::marker::PhantomData;
 use core::mem;
@@ -143,7 +144,7 @@ impl<T> Entry<T>
     )
     {
         self.offset_lower = (handler as u32 & 0xFFFF) as u16;
-        self.segment_selector = rdcs();
+        self.segment_selector = CS::read_raw();
         self._reserved = 0u8;
         self.options.wr_present(true);
         self.options.wr_gate_type(GateTypes::InterruptGate32);

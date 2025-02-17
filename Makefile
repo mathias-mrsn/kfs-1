@@ -18,7 +18,7 @@ OUTPUTDIR := ./target/${TARGET}/${TARGET_MODE}
 .PHONY: all
 all:	build copy remove
 
-.PHONY: build
+.PHONY: docker-build
 docker-build:
 			@printf "${YELLOW}${BOLD}%-10s${WHITE}%s${END}\n" "[ LOG ]" "Building ${KERNEL_NAME} docker image..."
 			@mkdir -p ${LOGSDIR}
@@ -34,7 +34,7 @@ docker-build:
 				exit 1)
 			@printf "${GREEN}${BOLD}%-10s${WHITE}%s${END}\n" "[ OK ]" "Docker image created"
 
-.PHONY: copy
+.PHONY: docker-copy
 docker-copy:
 			@printf "${YELLOW}${BOLD}%-10s${WHITE}%s${END}\n" "[ LOG ]" "Creating ${KERNEL_NAME} ${BUILDX_PLATFORM} container..."
 			@mkdir -p ${LOGSDIR}
@@ -67,7 +67,7 @@ docker-remove:
 			@printf "${GREEN}${BOLD}%-10s${WHITE}%s${END}\n" "[ OK ]" "${KERNEL_NAME} container succesfully removed"
 
 # TODO: Delete this rule
-.PHONY: run
+.PHONY: docker-run
 docker-run:
 			@printf "${YELLOW}${BOLD}%-10s${WHITE}%s${END}\n" "[ LOG ]" "Running ${KERNEL_NAME} container..."
 			@docker run \

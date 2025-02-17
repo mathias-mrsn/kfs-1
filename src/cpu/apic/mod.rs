@@ -339,7 +339,7 @@ pub fn initialize()
     let madt = rsdt.find_sdt::<MADT>();
 
     for it in madt.unwrap().iter::<IOApic>() {
-        println!("e: {:?}", (it.io_apic_address as *mut u32));
+        // println!("e: {:?}", (it.io_apic_address as *mut u32));
         unsafe {
             *(it.io_apic_address as *mut u32).offset(0) = 0x12;
             *(it.io_apic_address as *mut u32).offset(0x4) = 35;
@@ -347,7 +347,7 @@ pub fn initialize()
             *(it.io_apic_address as *mut u32).offset(0) = 0x13;
             *(it.io_apic_address as *mut u32).offset(0x4) = 00;
         }
-        println!("e: {:?}", it);
+        // println!("e: {:?}", it);
     }
 
     println!("{:?}", madt);

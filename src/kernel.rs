@@ -8,6 +8,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 #![feature(naked_functions)]
 #![feature(generic_const_exprs)]
+#![feature(const_trait_impl)]
 #![allow(incomplete_features)]
 #![feature(format_args_nl)]
 #![allow(dead_code)]
@@ -16,21 +17,33 @@
 #![reexport_test_harness_main = "kernel_maintest"]
 #![feature(abi_x86_interrupt)]
 
+mod commun;
 mod controllers;
 mod cpu;
 mod drivers;
 mod instructions;
+mod memory;
 mod multiboot;
 mod panic;
 mod qemu;
+mod registers;
 mod test;
 mod utils;
 
 use core::arch::asm;
+use core::arch::global_asm;
 use core::arch::naked_asm;
 use core::mem::MaybeUninit;
 
+use crate::commun::{ConstDefault, ConstFrom, ConstInto};
+
 use drivers::video::LOGGER;
+use memory::addr::PhysAddr;
+use memory::paging::pdt::PDE;
+use memory::paging::pdt::PDEFlags;
+use memory::paging::pdt::PDT;
+use registers::RegisterAccessor;
+use registers::cr0::CR0Flags;
 
 use crate::cpu::gdt;
 use crate::drivers::video::vgac;
@@ -62,34 +75,71 @@ pub static MULTIBOOT_HEADER: MultibootHeader = MultibootHeader {
 };
 
 #[used]
-#[unsafe(link_section = ".bss")]
+#[unsafe(link_section = ".bootstrap_stack")]
 static mut STACK: [MaybeUninit<u8>; STACK_SIZE] = MaybeUninit::uninit_array();
 
-#[naked]
 #[unsafe(no_mangle)]
-#[unsafe(link_section = ".boot")]
-pub extern "C" fn _start()
-{
-    unsafe {
-        naked_asm!(
-            "mov esp, offset {stack} + {stack_size}",
-            "
-            push ebx
-            push eax
-            call {kernel_main}
-            ",
-            "
-            cli
-            2:
-            hlt
-            jmp 2b
-            ",
-            stack = sym STACK,
-            stack_size = const STACK_SIZE,
-            kernel_main = sym kernel_main
-        )
+#[unsafe(link_section = ".boot.pdt")]
+static PDT: PDT = const {
+    let mut table = PDT::default_const();
+    let mut i: u32 = 0;
+    while i < 256 {
+        table.user_space[i as usize] = PDE::new(
+            PhysAddr::from_const(0x1000 * i),
+            PDEFlags::PAGE_SIZE
+                .union(PDEFlags::READ_WRITE)
+                .union(PDEFlags::PRESENT),
+        );
+        i += 1;
     }
+    i = 0;
+    while i < 1 {
+        table.kernel_space[i as usize] = PDE::new(
+            PhysAddr::from_const(0x1000 * i),
+            PDEFlags::PAGE_SIZE
+                .union(PDEFlags::READ_WRITE)
+                .union(PDEFlags::PRESENT),
+        );
+        i += 1;
+    }
+    table
+};
+
+unsafe extern "C" {
+    fn _start();
 }
+
+global_asm!(
+r#"
+.section .boot.text, "ax"
+.global _start
+_start:
+    mov esp, offset {stack} + {stack_size} - 0xc0000000
+    push ebx
+    push eax
+
+
+    mov eax, offset {PDT}
+    mov cr3, eax
+    mov eax, cr4
+    or eax, 0x00000010
+    mov cr4, eax
+  
+    mov eax, cr0
+    or eax, 0x80010000
+    mov cr0, eax
+
+    add esp, 0xc0000000
+
+
+
+    call {kernel_main}
+"#,
+    stack = sym STACK,
+    stack_size = const STACK_SIZE,
+    kernel_main = sym kernel_main,
+    PDT = sym PDT,
+);
 
 // use crate::drivers::video;
 
@@ -97,11 +147,11 @@ pub extern "C" fn _start()
 pub extern "C" fn kernel_main(multiboot_magic: u32) -> !
 {
     if multiboot_magic != multiboot::BOOTLOADER_MAGIC {
-        panic!("hi")
+        panic!("invalid magic number at ")
     }
 
     lazy_static::initialize(&cpu::GDT);
-    let _t = crate::cpu::apic::initialize();
+    // let _t = crate::cpu::apic::initialize();
     lazy_static::initialize(&cpu::IDT);
 
     #[cfg(test)]
@@ -138,9 +188,19 @@ pub extern "C" fn kernel_main(multiboot_magic: u32) -> !
     //     cpuid = core::arch::x86::__cpuid(1);
     // }
 
+    println!("salut");
+
+    // println!(
+    //     "cr3 pg addr -> {:?}",
+    //     crate::registers::cr3::CR3::read_pdt()
+    // );
+
+    // unsafe {
+    //     crate::registers::cr0::CR0::write(CR0Flags::PG);
+    // }
     loop {
-        unsafe {
-            asm!("hlt");
-        }
+        // unsafe {
+        //     asm!("hlt");
+        // }
     }
 }

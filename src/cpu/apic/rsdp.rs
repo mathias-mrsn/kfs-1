@@ -19,7 +19,7 @@ pub enum Error
 #[repr(C, packed)]
 pub struct RSDP
 {
-    signature:         [u8; 8],
+    pub signature:     [u8; 8],
     checksum:          u8,
     oem_id:            [u8; 6],
     revision:          u8,

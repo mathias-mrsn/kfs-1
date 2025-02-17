@@ -242,6 +242,7 @@ lazy_static! {
 
         m
     };
+
     pub static ref IDT: InterruptDescriptorTable = {
         let mut m: InterruptDescriptorTable = InterruptDescriptorTable::default();
         unsafe {
