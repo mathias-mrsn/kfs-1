@@ -1,6 +1,1 @@
-## kfs-1:
-- [ ]: GDT
-- [ ]: Protected Mode
-- [ ]: Terminal
-- [ ]: Implement Serial Port
-- [ ]: Create Mutex Lib
+Read Multiboot info and compute it into a bunch of pages

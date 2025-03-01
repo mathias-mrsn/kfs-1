@@ -8,7 +8,6 @@ SECTIONS
 {
   . = 0x00100000;
 
-	_kernel_start = .;
   .boot.text : {
     KEEP(*(.multiboot))
     *(.boot.text)
@@ -20,6 +19,7 @@ SECTIONS
 
 	. += 0xC0000000;
 
+  kernel_start = .;
 	.text ALIGN (4K) : AT (ADDR (.text) - 0xC0000000)
 	{
 		*(.text .text.*)
@@ -40,5 +40,5 @@ SECTIONS
 		*(COMMON)
 		*(.bss .bss.*)
 	}
-	_kernel_end = .;
+	kernel_end = .;
 }

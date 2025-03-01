@@ -1,5 +1,7 @@
 use core::ptr;
 
+pub mod mem;
+
 #[inline(always)]
 pub unsafe fn writec<T>(
     dest: *mut T,

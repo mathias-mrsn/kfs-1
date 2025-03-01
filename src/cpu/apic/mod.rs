@@ -92,6 +92,7 @@ impl SDTHeader
 
 use core::ptr::{read_volatile, write_volatile};
 
+///// GPT
 // === PIC definitions ===
 
 const PIC1_COMMAND: u16 = 0x20;

@@ -1,9 +1,17 @@
 use crate::commun::{ConstDefault, ConstFrom, ConstInto};
 use bitflags::bitflags;
+use core::mem;
 
 use crate::memory::addr::PhysAddr;
 
-use u32 as EntryType;
+use usize as EntryType;
+
+pub const PAGES_TABLES_SIZE: usize = 0x40_0000;
+
+/// Page Directory Table Physical Address
+pub const PDT_PHYS: PhysAddr = PhysAddr::from_const(0x1000);
+/// Page Directory Table Size
+pub const PDT_SIZE: usize = mem::size_of::<PDT>();
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -23,9 +31,9 @@ impl PDE
     {
         let mut e: EntryType = 0;
         if (f.bits() & PDEFlags::PAGE_SIZE.bits()) != 0 {
-            e = p.as_u32() & Self::ADDR_MASK_4KB;
+            e = p.inner() & Self::ADDR_MASK_4KB;
         } else {
-            e = p.as_u32() & Self::ADDR_MASK_4MB;
+            e = p.inner() & Self::ADDR_MASK_4MB;
         }
         Self(e | f.bits())
     }
@@ -78,7 +86,7 @@ impl const ConstDefault for PDT
 bitflags! {
     #[repr(transparent)]
     #[derive(PartialEq, Eq, Debug, Clone, Copy)]
-    pub struct PDEFlags: u32 {
+    pub struct PDEFlags: usize {
         const PRESENT = 1 << 0;
         const READ_WRITE = 1 << 1;
         const USER = 1 << 2;

@@ -86,13 +86,13 @@ impl CR3
     pub fn read_pdt() -> PhysAddr
     {
         let p = Self::read_raw();
-        PhysAddr(p >> 12)
+        PhysAddr((p >> 12) as usize)
     }
 
     pub unsafe fn write_pdt(p: PhysAddr)
     {
         let cr3 = Self::read_raw() & 0xFFF;
-        let p = p.0 << 12;
+        let p = (p.0 << 12) as u32;
         Self::write_raw(cr3 | p);
     }
 }

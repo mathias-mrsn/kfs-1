@@ -1,7 +1,3 @@
-/*
- * https://www.gnu.org/software/grub/manual/multiboot2/multiboot.html
- */
-
 #![no_std]
 #![no_main]
 #![feature(maybe_uninit_uninit_array)]
@@ -27,13 +23,16 @@ mod multiboot;
 mod panic;
 mod qemu;
 mod registers;
+mod sync;
 mod test;
 mod utils;
 
 use core::arch::asm;
 use core::arch::global_asm;
 use core::arch::naked_asm;
+use core::mem;
 use core::mem::MaybeUninit;
+use core::slice;
 
 use crate::commun::{ConstDefault, ConstFrom, ConstInto};
 
@@ -42,6 +41,8 @@ use memory::addr::PhysAddr;
 use memory::paging::pdt::PDE;
 use memory::paging::pdt::PDEFlags;
 use memory::paging::pdt::PDT;
+use multiboot::MultibootInfo;
+use multiboot::{MultibootMmapEntry, MultibootMmapEntryType};
 use registers::RegisterAccessor;
 use registers::cr0::CR0Flags;
 
@@ -82,7 +83,7 @@ static mut STACK: [MaybeUninit<u8>; STACK_SIZE] = MaybeUninit::uninit_array();
 #[unsafe(link_section = ".boot.pdt")]
 static PDT: PDT = const {
     let mut table = PDT::default_const();
-    let mut i: u32 = 0;
+    let mut i: usize = 0;
     while i < 256 {
         table.user_space[i as usize] = PDE::new(
             PhysAddr::from_const(0x1000 * i),
@@ -129,7 +130,7 @@ _start:
     mov eax, cr4
     or eax, 0x00000010
     mov cr4, eax
-  
+
     // Enable pagging
     mov eax, cr0
     or eax, 0x80010000
@@ -149,7 +150,10 @@ _start:
 // use crate::drivers::video;
 
 #[unsafe(no_mangle)]
-pub extern "C" fn kernel_main(multiboot_magic: u32) -> !
+pub extern "C" fn kernel_main(
+    multiboot_magic: u32,
+    mbi: &'static MultibootInfo,
+) -> !
 {
     if multiboot_magic != multiboot::BOOTLOADER_MAGIC {
         panic!("invalid magic number at ")
@@ -158,6 +162,10 @@ pub extern "C" fn kernel_main(multiboot_magic: u32) -> !
     lazy_static::initialize(&cpu::GDT);
     // let _t = crate::cpu::apic::initialize();
     lazy_static::initialize(&cpu::IDT);
+
+    // Initialize memory subsystems
+    let mmap = crate::memory::mmap::initialize(mbi);
+    //crate::memory::_kmem::initialize(mbi);
 
     #[cfg(test)]
     kernel_maintest();
@@ -193,12 +201,10 @@ pub extern "C" fn kernel_main(multiboot_magic: u32) -> !
     //     cpuid = core::arch::x86::__cpuid(1);
     // }
 
-    println!("salut");
-
-    // println!(
-    //     "cr3 pg addr -> {:?}",
-    //     crate::registers::cr3::CR3::read_pdt()
-    // );
+    //println!(
+    //    "cr3 pg addr -> {:?}",
+    //    crate::registers::cr3::CR3::read_pdt()
+    //);
 
     // unsafe {
     //     crate::registers::cr0::CR0::write(CR0Flags::PG);
