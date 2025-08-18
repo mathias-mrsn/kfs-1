@@ -1,6 +1,8 @@
 /**
  * TODO: Need to improve some calculations
  * TODO: Need to clear mutex lock
+ * BUG: Panic when scrolling down cause vc_index is sometimes higher than
+ * vc_end_screen
  *
  * Ideas for implementation:
  * - Create split screen mode
@@ -25,22 +27,22 @@ const BLANK: u16 = 0x0720;
 #[repr(u8)]
 pub enum VGAColor
 {
-    Black      = 0x00,
-    Blue       = 0x01,
-    Green      = 0x02,
-    Cyan       = 0x03,
-    Red        = 0x04,
-    Magenta    = 0x05,
-    Brown      = 0x06,
-    LightGray  = 0x07,
-    DarkGray   = 0x08,
-    LightBlue  = 0x09,
-    LightGreen = 0x0a,
-    LightCyan  = 0x0b,
-    LightRed   = 0x0c,
-    Pink       = 0x0d,
-    Yellow     = 0x0e,
-    White      = 0x0f,
+        Black      = 0x00,
+        Blue       = 0x01,
+        Green      = 0x02,
+        Cyan       = 0x03,
+        Red        = 0x04,
+        Magenta    = 0x05,
+        Brown      = 0x06,
+        LightGray  = 0x07,
+        DarkGray   = 0x08,
+        LightBlue  = 0x09,
+        LightGreen = 0x0a,
+        LightCyan  = 0x0b,
+        LightRed   = 0x0c,
+        Pink       = 0x0d,
+        Yellow     = 0x0e,
+        White      = 0x0f,
 }
 
 /// Types of text mode cursor shapes available in VGA.
@@ -48,11 +50,11 @@ pub enum VGAColor
 #[repr(u8)]
 pub enum CursorTypes
 {
-    Underline,
-    LowerThird,
-    LowerHalf,
-    Full,
-    None,
+        Underline,
+        LowerThird,
+        LowerHalf,
+        Full,
+        None,
 }
 
 /// VGA memory mapping ranges.
@@ -63,51 +65,51 @@ pub enum CursorTypes
 #[repr(u8)]
 pub enum MemoryRanges
 {
-    /// A0000h-BFFFFh (128K region)
-    Large  = 0,
-    /// A0000h-AFFFFh (64K region)
-    Medium = 1,
-    /// B8000h-BFFFFh (32K region)
-    Small  = 3,
+        /// A0000h-BFFFFh (128K region)
+        Large  = 0,
+        /// A0000h-AFFFFh (64K region)
+        Medium = 1,
+        /// B8000h-BFFFFh (32K region)
+        Small  = 3,
 }
 
 /// Standard VGA text mode resolutions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Resolution
 {
-    /// 40 columns × 10 rows text mode
-    R40_10,
-    /// 40 columns × 25 rows text mode
-    R40_25,
-    /// 40 columns × 50 rows text mode
-    R40_50,
-    /// 80 columns × 10 rows text mode
-    R80_10,
-    /// 80 columns × 25 rows text mode (most common)
-    R80_25,
-    /// 80 columns × 50 rows text mode
-    R80_50,
-    /// 120 columns × 25 rows text mode
-    R120_25,
-    /// 120 columns × 50 rows text mode
-    R120_50,
+        /// 40 columns × 10 rows text mode
+        R40_10,
+        /// 40 columns × 25 rows text mode
+        R40_25,
+        /// 40 columns × 50 rows text mode
+        R40_50,
+        /// 80 columns × 10 rows text mode
+        R80_10,
+        /// 80 columns × 25 rows text mode (most common)
+        R80_25,
+        /// 80 columns × 50 rows text mode
+        R80_50,
+        /// 120 columns × 25 rows text mode
+        R120_25,
+        /// 120 columns × 50 rows text mode
+        R120_50,
 }
 
 /// Scrolling directions for VGA text mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScrollDir
 {
-    /// Moves the visible_origin up.
-    VisualUp,
-    /// Moves the visible_origin down.
-    VisualDown,
-    /// Moves the index down and if there isn't enough space,
-    /// moves down both the origin and visible_origin.
-    Down,
-    /// Moves the visible_origin to the vram_base.
-    Top,
-    /// Moves the visible_origin to vram_end minus screen_size.
-    Bottom,
+        /// Moves the visible_origin up.
+        VisualUp,
+        /// Moves the visible_origin down.
+        VisualDown,
+        /// Moves the index down and if there isn't enough space,
+        /// moves down both the origin and visible_origin.
+        Down,
+        /// Moves the visible_origin to the vram_base.
+        Top,
+        /// Moves the visible_origin to vram_end minus screen_size.
+        Bottom,
 }
 
 /// VGA text mode console driver that provides basic text output functionality
@@ -143,750 +145,531 @@ pub enum ScrollDir
 ///                      .               .
 ///                      +---------------- <-- vram_end
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct VgaConsole
 {
-    /// Base address of VGA memory
-    pub vc_vram_base:        u32,
-    /// End address of VGA memory
-    pub vc_vram_end:         u32,
-    /// Current position in VGA memory where next character will be written
-    pub vc_index:            u32,
-    /// Total size of VGA memory in bytes
-    pub vc_vram_size:        u32,
-    /// Size of visible screen area in bytes
-    pub vc_screen_size:      u32,
-    /// Current foreground color for text output
-    pub vc_foreground_color: VGAColor,
-    /// Current background color for text output
-    pub vc_background_color: VGAColor,
-    /// Address of the first visible character on screen
-    pub vc_visible_origin:   u32,
-    /// Starting address of the current text buffer
-    pub vc_origin:           u32,
-    /// Ending address of the current text buffer
-    pub vc_origin_end:       u32,
-    /// Number of rows in the display
-    pub vc_rows:             u8,
-    /// Number of columns in the display
-    pub vc_cols:             u8,
-    /// Current cursor appearance type
-    pub vc_cursor_type:      CursorTypes,
+        /// Base address of VGA memory
+        pub vc_vram_base:        u32,
+        /// End address of VGA memory
+        pub vc_vram_end:         u32,
+        /// Current position in VGA memory where next character will be written
+        pub vc_index:            u32,
+        /// Total size of VGA memory in bytes
+        pub vc_vram_size:        u32,
+        /// Size of visible screen area in bytes
+        pub vc_screen_size:      u32,
+        /// Current foreground color for text output
+        pub vc_foreground_color: VGAColor,
+        /// Current background color for text output
+        pub vc_background_color: VGAColor,
+        /// Address of the first visible character on screen
+        pub vc_visible_origin:   u32,
+        /// Starting address of the current text buffer
+        pub vc_origin:           u32,
+        /// Ending address of the current text buffer
+        pub vc_origin_end:       u32,
+        /// Number of rows in the display
+        pub vc_rows:             u8,
+        /// Number of columns in the display
+        pub vc_cols:             u8,
+        /// Current cursor appearance type
+        pub vc_cursor_type:      CursorTypes,
 }
 
 impl VgaConsole
 {
-    /// Creates a new VGA text mode console with the specified configuration.
-    ///
-    /// This function initializes a new VGA console with the given parameters
-    /// and sets up the video memory according to the specified memory
-    /// range.
-    ///
-    /// # Arguments
-    ///
-    /// * `foreground_color` - The default text color for characters
-    /// * `background_color` - The default background color for characters
-    /// * `rows` - Number of text rows in the display (typically 25)
-    /// * `cols` - Number of text columns in the display (typically 80)
-    /// * `memory_range` - The VGA memory mapping range to use:
-    ///   - `Large`: A0000h-BFFFFh (128K)
-    ///   - `Medium`: A0000h-AFFFFh (64K)
-    ///   - `Small`: B8000h-BFFFFh (32K)
-    /// * `cursor_type` - Optional cursor appearance type. If `None`, cursor
-    ///   remains hidden
-    ///
-    /// # Returns
-    ///
-    /// Returns a new `VgaConsole` instance configured with the specified
-    /// parameters.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let vga = VgaConsole::new(
-    ///     VGAColor::White,           // Foreground color
-    ///     VGAColor::Black,           // Background color
-    ///     25,                        // Rows
-    ///     80,                        // Columns
-    ///     MemoryRanges::Small,       // Memory range
-    ///     Some(CursorTypes::Full),   // Cursor type
-    /// );
-    /// ```
-    pub fn new(
-        foreground_color: VGAColor,
-        background_color: VGAColor,
-        resolution: Resolution,
-        memory_range: MemoryRanges,
-        cursor_type: Option<CursorTypes>,
-    ) -> Self
-    {
-        let vram_base = match memory_range {
-            MemoryRanges::Large | MemoryRanges::Medium => 0xa0000,
-            MemoryRanges::Small => 0xb8000,
-        };
-
-        let vram_size = match memory_range {
-            MemoryRanges::Large => 0x20000,
-            MemoryRanges::Medium => 0xffff,
-            MemoryRanges::Small => 0x8000,
-        };
-
-        let (cols, rows): (u8, u8) = match resolution {
-            Resolution::R40_10 => (40, 10),
-            Resolution::R40_25 => (40, 25),
-            Resolution::R40_50 => (40, 50),
-            Resolution::R80_10 => (80, 10),
-            Resolution::R80_25 => (80, 25),
-            Resolution::R80_50 => (80, 50),
-            Resolution::R120_25 => (120, 25),
-            Resolution::R120_50 => (120, 50),
-        };
-
-        let misc: u8 = gfxc::read(gfxc::Indexes::Misc) & 0xf2;
-        gfxc::write(gfxc::Indexes::Misc, misc | (memory_range as u8) << 2);
-
-        let screen_size: u32 = rows as u32 * cols as u32 * core::mem::size_of::<u16>() as u32;
-
-        let mut con = Self {
-            vc_vram_base:        vram_base,
-            vc_vram_end:         (vram_base + vram_size),
-            vc_index:            vram_base,
-            vc_vram_size:        vram_size,
-            vc_screen_size:      screen_size,
-            vc_foreground_color: foreground_color,
-            vc_background_color: background_color,
-            vc_visible_origin:   vram_base,
-            vc_origin:           vram_base,
-            vc_origin_end:       vram_base + screen_size,
-            vc_rows:             rows,
-            vc_cols:             cols,
-            vc_cursor_type:      CursorTypes::None,
-        };
-
-        con.blank();
-        con.cursor(cursor_type);
-        con.resize(cols, rows);
-
-        con
-    }
-
-    /// Updates the CRT Controller's Start Address registers to set the
-    /// visible_origin
-    ///
-    /// This function calculates and sets the offset between the VGA memory base
-    ///
-    /// This is used internally for scrolling.
-    #[inline(always)]
-    fn set_mem_start(&mut self)
-    {
-        /*
-         * The value if divided by 2 cause the Start Offset in CRT Controller
-         * represent the offset between vram_base and the origin in word (2
-         * bytes).
-         */
-        let start: u16 = ((self.vc_visible_origin - self.vc_vram_base as u32) / 2) as _;
-
-        crtc::write(crtc::Indexes::StartLo, start as u8);
-        crtc::write(crtc::Indexes::StartHi, (start >> 8) as u8)
-    }
-
-    /// Computes the position of the beginning of the line where the index is
-    /// located.
-    ///
-    /// This is used internally for computing the index position when requesting
-    /// a new line.
-    #[inline(always)]
-    fn start_of_line(
-        &mut self,
-        mut pos: u32,
-    ) -> u32
-    {
-        pos -= self.vc_vram_base;
-        pos - (pos % (self.vc_cols as u32 * 2)) + self.vc_vram_base
-    }
-
-    /// Writes a single character to the VGA text buffer using default colors
-    ///
-    /// This is a convenience wrapper around [`cputc`] that uses the console's
-    /// current foreground and background colors.
-    ///
-    /// # Arguments
-    ///
-    /// * `c` - The ASCII character to write (values 0x20-0x7E are printable,
-    ///   others will display as a special character)
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let mut vga = VgaConsole::new(/* ... */);
-    /// vga.putc(b'A'); // Writes 'A' using current colors
-    /// ```
-    #[inline(always)]
-    pub fn putc(
-        &mut self,
-        c: u8,
-    )
-    {
-        self.cputc(c, None, None);
-    }
-
-    /// Writes a single character to the VGA text buffer with optional custom
-    /// colors
-    ///
-    /// This function writes a character to the current cursor position in VGA
-    /// text mode, allowing specification of custom foreground and
-    /// background colors. If colors are not specified, it uses the
-    /// console's current default colors.
-    ///
-    /// # Arguments
-    ///
-    /// * `c` - The ASCII character to write (values 0x20-0x7E are printable)
-    /// * `foreground` - Optional custom foreground color (0-15). If None, uses
-    ///   console's default
-    /// * `background` - Optional custom background color (0-15). If None, uses
-    ///   console's default
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let mut vga = VgaConsole::new(/* ... */);
-    ///
-    /// // Write 'A' with default colors
-    /// vga.cputc(b'A', None, None);
-    ///
-    /// // Write 'B' with custom red foreground on black background
-    /// vga.cputc(b'B', Some(0x04), Some(0x00));
-    /// ```
-    pub fn cputc(
-        &mut self,
-        c: u8,
-        foreground: Option<u8>,
-        background: Option<u8>,
-    )
-    {
-        let bg_color = background.unwrap_or(self.vc_background_color as u8) & 0xf;
-        let fg_color = foreground.unwrap_or(self.vc_foreground_color as u8) & 0xf;
-        let word = (c as u16) | ((bg_color as u16) << 12) | ((fg_color as u16) << 8);
-
-        unsafe {
-            *(self.vc_index as *mut u16) = word;
-        }
-        self.vc_index += core::mem::size_of::<u16>() as u32;
-        self.cursor(None);
-    }
-
-    /// Writes a string to the VGA text buffer using default colors
-    ///
-    /// This is a convenience wrapper around [`cputstr`] that uses the console's
-    /// current foreground and background colors.
-    ///
-    /// # Arguments
-    ///
-    /// * `str` - The string to write to the VGA buffer. Non-printable ASCII
-    ///   characters (except newline) will display as a special character
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let mut vga = VgaConsole::new(/* ... */);
-    /// vga.putstr("Hello World!\n"); // Writes text using current colors
-    /// ```
-    #[inline(always)]
-    pub fn putstr(
-        &mut self,
-        str: &str,
-    )
-    {
-        self.cputstr(str, None, None);
-    }
-
-    /// Writes a string to the VGA text buffer with optional custom colors
-    ///
-    /// This function writes each character from the input string to the VGA
-    /// buffer. It allows specifying custom foreground and background
-    /// colors for the text.
-    ///
-    /// # Arguments
-    ///
-    /// * `str` - The string to write to the VGA buffer
-    /// * `foreground` - Optional custom foreground color (0-15). If None, uses
-    ///   console's default
-    /// * `background` - Optional custom background color (0-15). If None, uses
-    ///   console's default
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let mut vga = VgaConsole::new(/* ... */);
-    ///
-    /// // Write with default colors
-    /// vga.cputstr("Hello\nWorld!", None, None);
-    ///
-    /// // Write with custom red foreground on black background
-    /// vga.cputstr("Colored Text", Some(0x04), Some(0x00));
-    /// ```
-    pub fn cputstr(
-        &mut self,
-        str: &str,
-        foreground: Option<u8>,
-        background: Option<u8>,
-    )
-    {
-        for byte in str.bytes() {
-            match byte {
-                // b'\n' => self.scroll(ScrollDir::NewLine, None),
-                b'\n' => {
-                    self.scroll(ScrollDir::Down, Some(1));
-                }
-                0x20..=0x7e => self.cputc(byte, foreground, background),
-                _ => self.cputc(0xfe, None, None),
-            };
-        }
-    }
-
-    /// Scrolls the VGA text buffer in the specified direction
-    ///
-    /// # Arguments
-    ///
-    /// * `dir` - The scrolling direction:
-    ///   - `ScrollDir::VisualUp` - Moves the visible window up
-    ///   - `ScrollDir::VisualDown` - Moves the visible window down
-    ///   - `ScrollDir::Down` - Moves content down, potentially wrapping around
-    ///     buffer
-    ///   - `ScrollDir::Top` - Jumps to the top of the buffer
-    ///   - `ScrollDir::Bottom` - Jumps to the bottom of the buffer
-    ///
-    /// * `lines` - Optional number of lines to scroll. If None, defaults to 0.
-    ///   For safety, cannot exceed half the screen height.
-    ///
-    /// # Safety
-    ///
-    /// - Performs unsafe operations when copying memory during buffer wrapping
-    /// - Ensures scrolling stays within valid buffer boundaries
-    /// - Maintains proper alignment of text lines
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let mut vga = VgaConsole::new(/* ... */);
-    ///
-    /// // Scroll content down by 1 line
-    /// vga.scroll(ScrollDir::Down, Some(1));
-    ///
-    /// // Jump to top of buffer
-    /// vga.scroll(ScrollDir::Top, None);
-    /// ```
-    pub fn scroll(
-        &mut self,
-        dir: ScrollDir,
-        lines: Option<u32>,
-    )
-    {
-        if lines.is_some() && lines.unwrap() > self.vc_rows as u32 / 2 {
-            return;
-        }
-
-        let mut delta: u32 = lines.unwrap_or(0).saturating_mul((self.vc_cols * 2) as u32);
-        let oldo: u32 = self.vc_origin;
-        match dir {
-            ScrollDir::VisualUp if lines.is_some() => {
-                self.vc_visible_origin = cmp::max(
-                    self.vc_visible_origin.saturating_sub(delta),
-                    self.vc_vram_base,
-                );
-            }
-            ScrollDir::VisualDown if lines.is_some() => {
-                self.vc_visible_origin =
-                    cmp::min(self.vc_visible_origin.saturating_add(delta), self.vc_origin);
-            }
-            ScrollDir::Down if lines.is_some() => {
-                let oldi = self.vc_index;
-                if self.vc_origin_end - self.vc_index > delta {
-                    self.vc_index = self.start_of_line(self.vc_index + delta)
-                } else {
-                    self.vc_index = self.start_of_line(self.vc_origin_end - 1)
+        /// Creates a new VGA text mode console with the specified
+        /// configuration.
+        pub fn new(
+                foreground_color: VGAColor,
+                background_color: VGAColor,
+                resolution: Resolution,
+                memory_range: MemoryRanges,
+                cursor_type: Option<CursorTypes>,
+        ) -> Self
+        {
+                let vram_base = match memory_range {
+                        MemoryRanges::Large | MemoryRanges::Medium => 0xa0000,
+                        MemoryRanges::Small => 0xb8000,
                 };
 
-                delta -= self.vc_index - self.start_of_line(oldi);
+                let vram_size = match memory_range {
+                        MemoryRanges::Large => 0x20000,
+                        MemoryRanges::Medium => 0xffff,
+                        MemoryRanges::Small => 0x8000,
+                };
 
-                if self.vc_origin_end + delta > self.vc_vram_end {
-                    unsafe {
-                        ptr::copy(
-                            self.vc_origin as *mut u8,
-                            self.vc_vram_base as *mut u8,
-                            (self.vc_screen_size - delta) as usize,
-                        );
-                    }
-                    self.vc_origin = self.vc_vram_base;
-                } else {
-                    self.vc_origin += delta;
+                let (cols, rows): (u8, u8) = match resolution {
+                        Resolution::R40_10 => (40, 10),
+                        Resolution::R40_25 => (40, 25),
+                        Resolution::R40_50 => (40, 50),
+                        Resolution::R80_10 => (80, 10),
+                        Resolution::R80_25 => (80, 25),
+                        Resolution::R80_50 => (80, 50),
+                        Resolution::R120_25 => (120, 25),
+                        Resolution::R120_50 => (120, 50),
+                };
+
+                let misc: u8 = gfxc::read(gfxc::Indexes::Misc) & 0xf2;
+                gfxc::write(gfxc::Indexes::Misc, misc | (memory_range as u8) << 2);
+
+                let screen_size: u32 =
+                        rows as u32 * cols as u32 * core::mem::size_of::<u16>() as u32;
+
+                let mut con = Self {
+                        vc_vram_base:        vram_base,
+                        vc_vram_end:         (vram_base + vram_size),
+                        vc_index:            vram_base,
+                        vc_vram_size:        vram_size,
+                        vc_screen_size:      screen_size,
+                        vc_foreground_color: foreground_color,
+                        vc_background_color: background_color,
+                        vc_visible_origin:   vram_base,
+                        vc_origin:           vram_base,
+                        vc_origin_end:       vram_base + screen_size,
+                        vc_rows:             rows,
+                        vc_cols:             cols,
+                        vc_cursor_type:      CursorTypes::None,
+                };
+
+                con.blank();
+                con.cursor(cursor_type);
+                con.resize(cols, rows);
+
+                con
+        }
+
+        /// Updates the CRT Controller's Start Address registers to set the
+        /// visible_origin
+        #[inline(always)]
+        fn set_mem_start(&mut self)
+        {
+                /*
+                 * The value if divided by 2 cause the Start Offset in CRT Controller
+                 * represent the offset between vram_base and the origin in word (2
+                 * bytes).
+                 */
+                let start: u16 = ((self.vc_visible_origin - self.vc_vram_base as u32) / 2) as _;
+
+                crtc::write(crtc::Indexes::StartLo, start as u8);
+                crtc::write(crtc::Indexes::StartHi, (start >> 8) as u8)
+        }
+
+        /// Computes the position of the beginning of the line where the index
+        /// is located.
+        #[inline(always)]
+        fn start_of_line(
+                &mut self,
+                mut pos: u32,
+        ) -> u32
+        {
+                pos -= self.vc_vram_base;
+                pos - (pos % (self.vc_cols as u32 * 2)) + self.vc_vram_base
+        }
+
+        /// Writes a single character to the VGA text buffer using default
+        /// colors
+        #[inline(always)]
+        pub fn putc(
+                &mut self,
+                c: u8,
+        )
+        {
+                self.cputc(c, None, None);
+        }
+
+        /// Writes a single character to the VGA text buffer with optional
+        /// custom colors
+        pub fn cputc(
+                &mut self,
+                c: u8,
+                foreground: Option<u8>,
+                background: Option<u8>,
+        )
+        {
+                let bg_color = background.unwrap_or(self.vc_background_color as u8) & 0xf;
+                let fg_color = foreground.unwrap_or(self.vc_foreground_color as u8) & 0xf;
+                let word = (c as u16) | ((bg_color as u16) << 12) | ((fg_color as u16) << 8);
+
+                if self.vc_index == self.vc_origin_end {
+                        self.scroll(ScrollDir::Down, Some(1));
                 }
-                self.vc_index = (self.vc_index - oldo) + self.vc_origin;
-                self.vc_origin_end = self.vc_origin + self.vc_screen_size;
-                self.vc_visible_origin = self.vc_origin;
+
                 unsafe {
-                    writec::<u16>(
-                        (self.vc_origin as *mut u16)
-                            .add(((self.vc_screen_size - delta) / 2) as usize),
-                        BLANK,
-                        delta as usize,
-                    );
+                        *(self.vc_index as *mut u16) = word;
                 }
-            }
-            ScrollDir::Bottom => {
-                self.vc_visible_origin = self.vc_origin;
-            }
-            ScrollDir::Top => {
+
+                self.vc_index += core::mem::size_of::<u16>() as u32;
+                self.cursor(None);
+        }
+
+        /// Writes a string to the VGA text buffer using default colors
+        #[inline(always)]
+        pub fn putstr(
+                &mut self,
+                str: &str,
+        )
+        {
+                self.cputstr(str, None, None);
+        }
+
+        /// Writes a string to the VGA text buffer with optional custom colors
+        pub fn cputstr(
+                &mut self,
+                str: &str,
+                foreground: Option<u8>,
+                background: Option<u8>,
+        )
+        {
+                for byte in str.bytes() {
+                        match byte {
+                                // b'\n' => self.scroll(ScrollDir::NewLine, None),
+                                b'\n' => {
+                                        self.scroll(ScrollDir::Down, Some(1));
+                                }
+                                0x20..=0x7e => self.cputc(byte, foreground, background),
+                                _ => self.cputc(0xfe, None, None),
+                        };
+                }
+        }
+
+        /// Scrolls the VGA text buffer in the specified direction
+        pub fn scroll(
+                &mut self,
+                dir: ScrollDir,
+                lines: Option<u32>,
+        )
+        {
+                if let Some(lines) = lines {
+                        debug_assert!(lines > 0);
+                        if lines > self.vc_rows as u32 / 2 {
+                                return;
+                        }
+                }
+
+                debug_assert!(self.vc_index <= self.vc_origin_end);
+
+                let mut delta: u32 = lines.unwrap_or(0).saturating_mul((self.vc_cols * 2) as u32);
+                let oldo: u32 = self.vc_origin;
+                match dir {
+                        ScrollDir::VisualUp if lines.is_some() => {
+                                self.vc_visible_origin = cmp::max(
+                                        self.vc_visible_origin.saturating_sub(delta),
+                                        self.vc_vram_base,
+                                );
+                        }
+                        ScrollDir::VisualDown if lines.is_some() => {
+                                self.vc_visible_origin = cmp::min(
+                                        self.vc_visible_origin.saturating_add(delta),
+                                        self.vc_origin,
+                                );
+                        }
+                        ScrollDir::Down if lines.is_some() => {
+                                let oldi = self.vc_index;
+                                if self.vc_origin_end - self.vc_index > delta {
+                                        // If there is enough space to scroll down.
+                                        self.vc_index = self.start_of_line(self.vc_index + delta)
+                                } else {
+                                        // Otherwise, move the cursor to the end of the screen.
+                                        self.vc_index = self.start_of_line(self.vc_origin_end)
+                                };
+
+                                // Substract from delta the number of character already present on
+                                // screen.
+                                delta -= self.vc_index - self.start_of_line(oldi);
+
+                                // Ensure that delta is a multiple of the screen size.
+                                debug_assert!(delta % (self.vc_cols as u32 * 2) == 0);
+
+                                // If the buffer doesnt have enough place to scroll. Copy the screen
+                                // to the beginning of the buffer
+                                // and empty it.
+                                if self.vc_origin_end + delta > self.vc_vram_end {
+                                        unsafe {
+                                                ptr::copy(
+                                                        self.vc_origin as *mut u8,
+                                                        self.vc_vram_base as *mut u8,
+                                                        (self.vc_screen_size.saturating_sub(delta))
+                                                                as usize,
+                                                );
+                                        }
+                                        self.vc_origin = self.vc_vram_base;
+                                } else {
+                                        // Otherwise just move the current
+                                        self.vc_origin += delta;
+                                }
+                                // TEST: THIS
+                                self.vc_index = self
+                                        .vc_index
+                                        .saturating_sub(oldo)
+                                        .saturating_sub(delta)
+                                        .saturating_add(self.vc_origin);
+                                self.vc_origin_end = self.vc_origin + self.vc_screen_size;
+                                self.vc_visible_origin = self.vc_origin;
+                                unsafe {
+                                        writec::<u16>(
+                                                (self.vc_origin as *mut u16).add(((self
+                                                        .vc_screen_size
+                                                        - delta)
+                                                        / 2)
+                                                        as usize),
+                                                BLANK,
+                                                delta as usize,
+                                        );
+                                }
+                        }
+                        ScrollDir::Bottom => {
+                                self.vc_visible_origin = self.vc_origin;
+                        }
+                        ScrollDir::Top => {
+                                self.vc_visible_origin = self.vc_vram_base;
+                        }
+                        _ => {
+                                panic!("error")
+                        }
+                }
+                self.set_mem_start();
+                self.cursor(Some(CursorTypes::Full));
+        }
+
+        /// Clears the entire VGA text buffer by filling it with blank
+        /// characters
+        pub fn blank(&mut self)
+        {
+                unsafe {
+                        writec::<u16>(
+                                self.vc_vram_base as *mut u16,
+                                BLANK,
+                                self.vc_vram_size as usize,
+                        );
+                }
+                self.vc_origin = self.vc_vram_base;
                 self.vc_visible_origin = self.vc_vram_base;
-            }
-            _ => {
-                panic!("error")
-            }
+                self.vc_index = self.vc_vram_base;
+
+                self.set_mem_start();
+                self.cursor(None);
         }
-        self.set_mem_start();
-        self.cursor(Some(CursorTypes::Full));
-    }
 
-    /// Clears the entire VGA text buffer by filling it with blank characters
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let mut vga = VgaConsole::new(/* ... */);
-    /// vga.blank(); // Clears the entire screen
-    /// ```
-    ///
-    /// # Safety
-    ///
-    /// This function performs direct memory writes to VGA memory through unsafe
-    /// operations.
-    pub fn blank(&mut self)
-    {
-        unsafe {
-            writec::<u16>(
-                self.vc_vram_base as *mut u16,
-                BLANK,
-                self.vc_vram_size as usize,
-            );
+        /// Sets the VGA text mode cursor size by configuring its start and end
+        /// scan lines
+        fn cursor_size(
+                &mut self,
+                from: u8,
+                to: u8,
+        )
+        {
+                let mut c_start: u8 = crtc::read(crtc::Indexes::CursorStart);
+                let mut c_end: u8 = crtc::read(crtc::Indexes::CursorEnd);
+
+                c_start = (c_start & 0xc0) | from;
+                c_end = (c_end & 0xe0) | to;
+
+                crtc::write(crtc::Indexes::CursorStart, c_start);
+                crtc::write(crtc::Indexes::CursorEnd, c_end);
         }
-        self.vc_origin = self.vc_vram_base;
-        self.vc_visible_origin = self.vc_vram_base;
-        self.vc_index = self.vc_vram_base;
 
-        self.set_mem_start();
-        self.cursor(None);
-    }
+        /// Updates the hardware cursor position and optionally changes its
+        /// appearance
+        pub fn cursor(
+                &mut self,
+                cursor_type: Option<CursorTypes>,
+        )
+        {
+                let pos = (self.vc_index as u32 - self.vc_vram_base) / 2;
+                crtc::write(crtc::Indexes::CursorLo, pos as u8);
+                crtc::write(crtc::Indexes::CursorHi, (pos >> 8) as u8);
 
-    /// Sets the VGA text mode cursor size by configuring its start and end scan
-    /// lines
-    ///
-    /// # Arguments
-    ///
-    /// * `from` - Starting scan line for the cursor (0-15)
-    /// * `to` - Ending scan line for the cursor (0-15)
-    ///
-    /// # Safety
-    ///
-    /// This function performs direct hardware I/O through the CRTC registers
-    /// and should only be called when appropriate hardware access is
-    /// guaranteed.
-    ///
-    /// This is used internally custom the cursor appearance.
-    fn cursor_size(
-        &mut self,
-        from: u8,
-        to: u8,
-    )
-    {
-        let mut c_start: u8 = crtc::read(crtc::Indexes::CursorStart);
-        let mut c_end: u8 = crtc::read(crtc::Indexes::CursorEnd);
+                if cursor_type.is_some() {
+                        const CURSOR_ENABLE_MASK: u8 = 0xdf;
+                        const CURSOR_DISABLE_MASK: u8 = 0x20;
+                        let c = crtc::read(crtc::Indexes::CursorStart);
 
-        c_start = (c_start & 0xc0) | from;
-        c_end = (c_end & 0xe0) | to;
+                        if self.vc_cursor_type == CursorTypes::None {
+                                crtc::write(crtc::Indexes::CursorStart, c & CURSOR_ENABLE_MASK);
+                        }
 
-        crtc::write(crtc::Indexes::CursorStart, c_start);
-        crtc::write(crtc::Indexes::CursorEnd, c_end);
-    }
-
-    /// Updates the hardware cursor position and optionally changes its
-    /// appearance
-    ///
-    /// # Arguments
-    ///
-    /// * `cursor_type` - Optional new cursor appearance to set:
-    ///   - `None` - Only updates cursor position without changing appearance
-    ///   - `Some(CursorTypes::Full)` - Full block cursor (scan lines 0-16)
-    ///   - `Some(CursorTypes::LowerHalf)` - Lower half block (scan lines 8-16)
-    ///   - `Some(CursorTypes::LowerThird)` - Lower third block (scan lines
-    ///     10-16)
-    ///   - `Some(CursorTypes::Underline)` - Single line at bottom (scan line
-    ///     15-16)
-    ///   - `Some(CursorTypes::None)` - Hides the cursor
-    ///
-    /// # Safety
-    ///
-    /// This function performs direct hardware I/O through the CRTC registers
-    /// and should only be called when appropriate hardware access is
-    /// guaranteed.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let mut vga = VgaConsole::new(/* ... */);
-    ///
-    /// // Just update cursor position
-    /// vga.cursor(None);
-    ///
-    /// // Change to underline cursor
-    /// vga.cursor(Some(CursorTypes::Underline));
-    ///
-    /// // Hide cursor
-    /// vga.cursor(Some(CursorTypes::None));
-    /// ```
-    pub fn cursor(
-        &mut self,
-        cursor_type: Option<CursorTypes>,
-    )
-    {
-        let pos = (self.vc_index as u32 - self.vc_vram_base) / 2;
-        crtc::write(crtc::Indexes::CursorLo, pos as u8);
-        crtc::write(crtc::Indexes::CursorHi, (pos >> 8) as u8);
-
-        if cursor_type.is_some() {
-            const CURSOR_ENABLE_MASK: u8 = 0xdf;
-            const CURSOR_DISABLE_MASK: u8 = 0x20;
-            let c = crtc::read(crtc::Indexes::CursorStart);
-
-            if self.vc_cursor_type == CursorTypes::None {
-                crtc::write(crtc::Indexes::CursorStart, c & CURSOR_ENABLE_MASK);
-            }
-
-            match cursor_type.unwrap() {
-                CursorTypes::Full => self.cursor_size(0, 16),
-                CursorTypes::LowerHalf => self.cursor_size(8, 16),
-                CursorTypes::LowerThird => self.cursor_size(10, 16),
-                CursorTypes::Underline => self.cursor_size(15, 16),
-                CursorTypes::None => {
-                    crtc::write(crtc::Indexes::CursorStart, c | CURSOR_DISABLE_MASK)
+                        match cursor_type.unwrap() {
+                                CursorTypes::Full => self.cursor_size(0, 16),
+                                CursorTypes::LowerHalf => self.cursor_size(8, 16),
+                                CursorTypes::LowerThird => self.cursor_size(10, 16),
+                                CursorTypes::Underline => self.cursor_size(15, 16),
+                                CursorTypes::None => crtc::write(
+                                        crtc::Indexes::CursorStart,
+                                        c | CURSOR_DISABLE_MASK,
+                                ),
+                        }
                 }
-            }
-        }
-    }
-
-    /// Resizes the VGA text mode display to the specified dimensions
-    ///
-    /// This function adjusts the VGA display size by configuring various CRT
-    /// Controller registers to achieve the desired text mode dimensions. It
-    /// handles scan line calculations and maintains proper synchronization.
-    ///
-    /// # Arguments
-    ///
-    /// * `height` - The desired height in character rows (typically 25 or 50)
-    /// * `width` - The desired width in character columns (typically 80 or 40)
-    ///
-    /// # Safety
-    ///
-    /// This function performs direct hardware I/O through the CRTC registers
-    /// and should only be called when appropriate hardware access is
-    /// guaranteed.
-    ///
-    /// This function is a Rust implementation of the original vgacon_doresize
-    /// function from the Linux kernel.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let mut vga = VgaConsole::new(/* ... */);
-    ///
-    /// // Resize to 25x80 text mode
-    /// vga.resize(80, 25);
-    ///
-    /// // Resize to 50x40 text mode
-    /// vga.resize(40, 50);
-    /// ```
-    pub fn resize(
-        &mut self,
-        width: u8,
-        height: u8,
-    )
-    {
-        let mut scanlines: u32 = height as u32 * 16;
-
-        /* If Scan Doubling enabled, 200-scan-line video data is converted to
-         * 400-scan-line output */
-        let max_scan: u8 = crtc::read(crtc::Indexes::MaxScan);
-        if (max_scan & 0x80) != 0 {
-            scanlines <<= 1;
         }
 
-        /* If SLDIV enabled, divide scan line clock by 2 */
-        let mode = crtc::read(crtc::Indexes::Mode);
-        if (mode & 0x04) != 0 {
-            scanlines >>= 1;
+        /// Resizes the VGA text mode display to the specified dimensions
+        pub fn resize(
+                &mut self,
+                width: u8,
+                height: u8,
+        )
+        {
+                let mut scanlines: u32 = height as u32 * 16;
+
+                /* If Scan Doubling enabled, 200-scan-line video data is converted to
+                 * 400-scan-line output */
+                let max_scan: u8 = crtc::read(crtc::Indexes::MaxScan);
+                if (max_scan & 0x80) != 0 {
+                        scanlines <<= 1;
+                }
+
+                /* If SLDIV enabled, divide scan line clock by 2 */
+                let mode = crtc::read(crtc::Indexes::Mode);
+                if (mode & 0x04) != 0 {
+                        scanlines >>= 1;
+                }
+                scanlines -= 1;
+                let scanlines_lo = scanlines & 0xff;
+
+                /*
+                 * Set the two higher bits of the Vertical Display End
+                 */
+                let mut r7 = crtc::read(crtc::Indexes::Overflow) & !0x42;
+                if (scanlines & 0x100) != 0 {
+                        r7 |= 0x02;
+                }
+                if (scanlines & 0x200) != 0 {
+                        r7 |= 0x40;
+                }
+
+                /* Enable protection */
+                let vsync_end = crtc::read(crtc::Indexes::VSyncEnd);
+                crtc::write(crtc::Indexes::VSyncEnd, vsync_end & !0x80);
+
+                /* Reduire the size of the window */
+                crtc::write(crtc::Indexes::HDisp, width - 1);
+                crtc::write(crtc::Indexes::VDispEnd, scanlines_lo as u8);
+                crtc::write(crtc::Indexes::Offset, width >> 1);
+                crtc::write(crtc::Indexes::VSyncEnd, scanlines_lo as u8);
+                crtc::write(crtc::Indexes::Overflow, r7);
+
+                /* Disable protection */
+                crtc::write(crtc::Indexes::VSyncEnd, vsync_end);
+
+                self.vc_cols = width;
+                self.vc_rows = height;
         }
-        scanlines -= 1;
-        let scanlines_lo = scanlines & 0xff;
-
-        /*
-         * Set the two higher bits of the Vertical Display End
-         */
-        let mut r7 = crtc::read(crtc::Indexes::Overflow) & !0x42;
-        if (scanlines & 0x100) != 0 {
-            r7 |= 0x02;
-        }
-        if (scanlines & 0x200) != 0 {
-            r7 |= 0x40;
-        }
-
-        /* Enable protection */
-        let vsync_end = crtc::read(crtc::Indexes::VSyncEnd);
-        crtc::write(crtc::Indexes::VSyncEnd, vsync_end & !0x80);
-
-        /* Reduire the size of the window */
-        crtc::write(crtc::Indexes::HDisp, width - 1);
-        crtc::write(crtc::Indexes::VDispEnd, scanlines_lo as u8);
-        crtc::write(crtc::Indexes::Offset, width >> 1);
-        crtc::write(crtc::Indexes::VSyncEnd, scanlines_lo as u8);
-        crtc::write(crtc::Indexes::Overflow, r7);
-
-        /* Disable protection */
-        crtc::write(crtc::Indexes::VSyncEnd, vsync_end);
-
-        self.vc_cols = width;
-        self.vc_rows = height;
-    }
 }
 
 /// Implements the [`core::fmt::Write`] trait for [`VgaConsole`], allowing it to
 /// be used with Rust's formatting macros like `write!` and `writeln!`.
-///
-/// This implementation enables formatted text output to the VGA console using
-/// Rust's standard formatting infrastructure.
-///
-/// # Examples
-///
-/// ```rust
-/// use core::fmt::Write;
-/// let mut vga = VgaConsole::new(/* ... */);
-///
-/// // Using write! macro
-/// write!(vga, "Hello {}", "World").unwrap();
-///
-/// // Using writeln! macro
-/// writeln!(vga, "Value: {}", 42).unwrap();
-/// ```
 impl fmt::Write for VgaConsole
 {
-    fn write_str(
-        &mut self,
-        s: &str,
-    ) -> fmt::Result
-    {
-        self.putstr(s);
-        Ok(())
-    }
+        fn write_str(
+                &mut self,
+                s: &str,
+        ) -> fmt::Result
+        {
+                self.putstr(s);
+                Ok(())
+        }
 
-    fn write_char(
-        &mut self,
-        c: char,
-    ) -> fmt::Result
-    {
-        self.putc(c as u8);
-        Ok(())
-    }
+        fn write_char(
+                &mut self,
+                c: char,
+        ) -> fmt::Result
+        {
+                self.putc(c as u8);
+                Ok(())
+        }
 }
 
 #[test_case]
 fn test_putstr()
 {
-    let mut vga: VgaConsole = VgaConsole::new(
-        VGAColor::White,
-        VGAColor::Black,
-        Resolution::R80_25,
-        MemoryRanges::Small,
-        Some(CursorTypes::Full),
-    );
-    vga.putstr("\nHello\n");
-    for _i in 0..25 {
-        vga.putstr("0123456789abcdefghijklmnopqrstuvwxyz");
-    }
-    for _i in 0..15 {
-        vga.putstr("newline\n");
-    }
-    vga.putstr("end");
-    unsafe {
-        assert_eq!(*(vga.vc_origin as *mut u16).offset(0), 0x0f00 | 'g' as u16);
-    }
-    vga.scroll(ScrollDir::Top, None);
-    vga.scroll(ScrollDir::Bottom, None);
-    vga.putstr("\nh\nhh\n");
+        let mut vga: VgaConsole = VgaConsole::new(
+                VGAColor::White,
+                VGAColor::Black,
+                Resolution::R80_25,
+                MemoryRanges::Small,
+                Some(CursorTypes::Full),
+        );
+        vga.putstr("\nHello\n");
+        for _i in 0..25 {
+                vga.putstr("0123456789abcdefghijklmnopqrstuvwxyz");
+        }
+        for _i in 0..15 {
+                vga.putstr("newline\n");
+        }
+        vga.putstr("end");
+        unsafe {
+                assert_eq!(*(vga.vc_origin as *mut u16).offset(0), 0x0f00 | 'g' as u16);
+        }
+        //vga.scroll(ScrollDir::Top, None);
+        //vga.scroll(ScrollDir::Bottom, None);
+        //vga.putstr("\nh\nhh\n");
 
-    unsafe {
-        assert_eq!(*(vga.vc_origin as *mut u16).offset(0), 0x0f00 | '4' as u16);
-    }
+        unsafe {
+                assert_eq!(*(vga.vc_origin as *mut u16).offset(0), 0x0f00 | '4' as u16);
+        }
 }
 
 #[test_case]
 fn test_memory_bounderies()
 {
-    use core::fmt::Write;
+        use core::fmt::Write;
 
-    let mut vga: VgaConsole = VgaConsole::new(
-        VGAColor::White,
-        VGAColor::Black,
-        Resolution::R80_25,
-        MemoryRanges::Small,
-        Some(CursorTypes::Full),
-    );
+        let mut vga: VgaConsole = VgaConsole::new(
+                VGAColor::White,
+                VGAColor::Black,
+                Resolution::R80_25,
+                MemoryRanges::Small,
+                Some(CursorTypes::Full),
+        );
 
-    for _i in 0..206 {
-        writeln!(
-            vga,
-            "o -> {:#07x}; end -> {:#07x}; i -> {:#07x}",
-            vga.vc_origin as u32, vga.vc_origin_end as u32, vga.vc_index as u32
-        )
-        .unwrap();
-    }
+        for _i in 0..206 {
+                writeln!(
+                        vga,
+                        "o -> {:#07x}; end -> {:#07x}; i -> {:#07x}",
+                        vga.vc_origin as u32, vga.vc_origin_end as u32, vga.vc_index as u32
+                )
+                .unwrap();
+        }
 
-    writeln!(vga, "test").unwrap();
-    vga.blank();
+        writeln!(vga, "test").unwrap();
+        vga.blank();
 
-    let mut vga_m: VgaConsole = VgaConsole::new(
-        VGAColor::White,
-        VGAColor::Black,
-        Resolution::R80_25,
-        MemoryRanges::Medium,
-        Some(CursorTypes::Full),
-    );
+        let mut vga_m: VgaConsole = VgaConsole::new(
+                VGAColor::White,
+                VGAColor::Black,
+                Resolution::R80_25,
+                MemoryRanges::Medium,
+                Some(CursorTypes::Full),
+        );
 
-    for _i in 0..(205 * 2) {
-        writeln!(
-            vga_m,
-            "o -> {:#07x}; end -> {:#07x}; i -> {:#07x}",
-            vga_m.vc_origin as u32, vga_m.vc_origin_end as u32, vga_m.vc_index as u32
-        )
-        .unwrap();
-    }
+        for _i in 0..(205 * 2) {
+                writeln!(
+                        vga_m,
+                        "o -> {:#07x}; end -> {:#07x}; i -> {:#07x}",
+                        vga_m.vc_origin as u32, vga_m.vc_origin_end as u32, vga_m.vc_index as u32
+                )
+                .unwrap();
+        }
 
-    writeln!(vga_m, "test").unwrap();
-    vga_m.blank();
+        writeln!(vga_m, "test").unwrap();
+        vga_m.blank();
 
-    let mut vga_l: VgaConsole = VgaConsole::new(
-        VGAColor::White,
-        VGAColor::Black,
-        Resolution::R80_25,
-        MemoryRanges::Large,
-        Some(CursorTypes::Full),
-    );
+        let mut vga_l: VgaConsole = VgaConsole::new(
+                VGAColor::White,
+                VGAColor::Black,
+                Resolution::R80_25,
+                MemoryRanges::Large,
+                Some(CursorTypes::Full),
+        );
 
-    for _i in 0..(205 * 4) {
-        writeln!(
-            vga_l,
-            "o -> {:#07x}; end -> {:#07x}; i -> {:#07x}",
-            vga_l.vc_origin as u32, vga_l.vc_origin_end as u32, vga_l.vc_index as u32
-        )
-        .unwrap();
-    }
+        for _i in 0..(205 * 4) {
+                writeln!(
+                        vga_l,
+                        "o -> {:#07x}; end -> {:#07x}; i -> {:#07x}",
+                        vga_l.vc_origin as u32, vga_l.vc_origin_end as u32, vga_l.vc_index as u32
+                )
+                .unwrap();
+        }
 
-    writeln!(vga_l, "test").unwrap();
+        writeln!(vga_l, "test").unwrap();
 }

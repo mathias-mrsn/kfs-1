@@ -54,13 +54,15 @@ pub fn initialize(mbi: &'static MultibootInfo)
             let kernel_code_length: usize =
                 unsafe { &kernel_end as *const _ as usize - &kernel_start as *const _ as usize };
 
-            let kernel_space: PhysAddr =
+            let mut kernel_space: PhysAddr =
                 KERNEL_CODE_PHYS + max(kernel_code_length, 0x300000) + PAGES_TABLES_SIZE;
+            kernel_space.align_up(PAGE_SIZE);
 
-            let kernel_space_end = min(
+            let mut kernel_space_end = min(
                 PhysAddr::from((largest.addr + largest.len) as usize),
                 KERNEL_SPACE_MAX_END,
             );
+            kernel_space_end.align_down(PAGE_SIZE);
             println!("start: {}, end: {}", kernel_space, kernel_space_end);
 
             //let total_memory = (largest.addr + largest.len) -

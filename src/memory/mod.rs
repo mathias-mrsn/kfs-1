@@ -1,6 +1,7 @@
 use addr::PhysAddr;
 
 pub mod addr;
+pub mod buddy_allocator;
 pub mod layout;
 pub mod mmap;
 pub mod paging;

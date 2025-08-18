@@ -14,5 +14,6 @@ fn panic(info: &PanicInfo) -> !
     );
 
     writeln!(vga, "Fatal Error: {}", info.message()).unwrap();
+    writeln!(vga, "Location: {:?}", info.location()).unwrap();
     loop {}
 }

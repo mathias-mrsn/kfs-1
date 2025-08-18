@@ -3,7 +3,7 @@
 /// # Panics
 ///
 /// Panics if `page_size` is not a power of two.
-fn align_up(
+pub fn align_up(
     value: usize,
     page_size: usize,
 ) -> usize
@@ -20,7 +20,7 @@ fn align_up(
 /// # Panics
 ///
 /// Panics if `page_size` is not a power of two.
-fn align_down(
+pub fn align_down(
     value: usize,
     page_size: usize,
 ) -> usize

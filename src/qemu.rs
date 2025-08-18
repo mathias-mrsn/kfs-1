@@ -6,13 +6,13 @@ use crate::controllers;
 #[repr(u32)]
 pub enum QemuExitCode
 {
-    Success = 0x10,
-    Failed  = 0x11,
+        Success = 0x10,
+        Failed  = 0x11,
 }
 
 pub fn exit(code: QemuExitCode)
 {
-    unsafe {
-        controllers::outdw(EXIT_IO_PORT, code as u32);
-    }
+        unsafe {
+                controllers::outdw(EXIT_IO_PORT, code as u32);
+        }
 }

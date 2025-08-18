@@ -1,5 +1,6 @@
 use core::ptr;
 
+pub mod math;
 pub mod mem;
 
 #[inline(always)]

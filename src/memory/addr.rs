@@ -1,4 +1,5 @@
 use crate::commun::{ConstFrom, ConstInto};
+use crate::utils::mem::{align_down, align_up};
 use core::{
     fmt::{Display, Formatter, LowerHex, Result},
     ops::Add,
@@ -28,7 +29,23 @@ impl PhysAddr
     pub const fn as_u32(&self) -> u32 { self.0 as _ }
 
     #[inline]
-    pub const fn as_ptr<T>(self) -> *const T { self.as_u64() as *const T }
+    pub const fn as_ptr<T>(&self) -> *const T { self.as_u64() as *const T }
+
+    pub fn align_up(
+        &mut self,
+        v: usize,
+    )
+    {
+        self.0 = align_up(self.0, v)
+    }
+
+    pub fn align_down(
+        &mut self,
+        v: usize,
+    )
+    {
+        self.0 = align_down(self.0, v)
+    }
 }
 
 impl Default for PhysAddr
