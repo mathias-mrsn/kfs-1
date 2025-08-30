@@ -9,12 +9,11 @@
  * - Add helper functions for CRTC and GFX controllers to dump registers
  *
  */
-use crate::utils::writec;
-
+// use crate::utils::writec;
 use crate::controllers::{crtc, gfxc};
-use core::cmp;
 use core::fmt;
 use core::ptr;
+use core::{cmp, slice};
 
 /// Default 16-bit word for clearing VGA text mode memory.
 /// Represents a space character (0x20) with light gray foreground (0x07).
@@ -407,15 +406,24 @@ impl VgaConsole
                                 self.vc_origin_end = self.vc_origin + self.vc_screen_size;
                                 self.vc_visible_origin = self.vc_origin;
                                 unsafe {
-                                        writec::<u16>(
+                                        // writec::<u16>(
+                                        //         (self.vc_origin as *mut u16).add(((self
+                                        //                 .vc_screen_size
+                                        //                 - delta)
+                                        //                 / 2)
+                                        //                 as usize),
+                                        //         BLANK,
+                                        //         delta as usize,
+                                        // );
+                                        let s: &mut [u16] = slice::from_raw_parts_mut(
                                                 (self.vc_origin as *mut u16).add(((self
                                                         .vc_screen_size
                                                         - delta)
                                                         / 2)
                                                         as usize),
-                                                BLANK,
                                                 delta as usize,
                                         );
+                                        s.fill(BLANK);
                                 }
                         }
                         ScrollDir::Bottom => {
@@ -437,11 +445,17 @@ impl VgaConsole
         pub fn blank(&mut self)
         {
                 unsafe {
-                        writec::<u16>(
+                        // writec::<u16>(
+                        //         self.vc_vram_base as *mut u16,
+                        //         BLANK,
+                        //         self.vc_vram_size as usize,
+                        // );
+
+                        let s: &mut [u16] = slice::from_raw_parts_mut(
                                 self.vc_vram_base as *mut u16,
-                                BLANK,
                                 self.vc_vram_size as usize,
                         );
+                        s.fill(BLANK);
                 }
                 self.vc_origin = self.vc_vram_base;
                 self.vc_visible_origin = self.vc_vram_base;
