@@ -1,8 +1,6 @@
 #![no_std]
 #![no_main]
-#![feature(maybe_uninit_uninit_array)]
 #![allow(unsafe_op_in_unsafe_fn)]
-#![feature(naked_functions)]
 #![feature(generic_const_exprs)]
 #![feature(const_trait_impl)]
 #![allow(incomplete_features)]
@@ -34,29 +32,29 @@ const STACK_SIZE: usize = 0x10000;
 #[used]
 #[unsafe(link_section = ".multiboot")]
 pub static MULTIBOOT_HEADER: MultibootHeader = MultibootHeader {
-        magic:         MULTIBOOT_HEADER_MAGIC,
-        flags:         MultibootHeaderFlags::ALIGN_MODULES.bits()
+        magic: MULTIBOOT_HEADER_MAGIC,
+        flags: MultibootHeaderFlags::ALIGN_MODULES.bits()
                 | MultibootHeaderFlags::MEMORY_INFO.bits(),
-        checksum:      MULTIBOOT_HEADER_MAGIC
+        checksum: MULTIBOOT_HEADER_MAGIC
                 .wrapping_add(
                         MultibootHeaderFlags::ALIGN_MODULES.bits()
                                 | MultibootHeaderFlags::MEMORY_INFO.bits(),
                 )
                 .wrapping_neg(),
-        header_addr:   0,
-        load_addr:     0,
+        header_addr: 0,
+        load_addr: 0,
         load_end_addr: 0,
-        bss_end_addr:  0,
-        entry_addr:    0,
-        mode_type:     0,
-        width:         0,
-        height:        0,
-        depth:         0,
+        bss_end_addr: 0,
+        entry_addr: 0,
+        mode_type: 0,
+        width: 0,
+        height: 0,
+        depth: 0,
 };
 
 #[used]
 #[unsafe(link_section = ".bss")]
-static mut STACK: [MaybeUninit<u8>; STACK_SIZE] = MaybeUninit::uninit_array();
+static mut STACK: [MaybeUninit<u8>; STACK_SIZE] = [MaybeUninit::uninit(); STACK_SIZE];
 
 unsafe extern "C" {
         fn _start();
@@ -89,8 +87,7 @@ _start:
 pub extern "C" fn kernel_main(
         multiboot_magic: u32,
         _mbi: &'static MultibootInfo,
-) -> !
-{
+) -> ! {
         if multiboot_magic != multiboot::BOOTLOADER_MAGIC {
                 panic!("invalid magic number at ")
         }
