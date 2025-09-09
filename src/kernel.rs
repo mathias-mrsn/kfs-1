@@ -32,24 +32,24 @@ const STACK_SIZE: usize = 0x10000;
 #[used]
 #[unsafe(link_section = ".multiboot")]
 pub static MULTIBOOT_HEADER: MultibootHeader = MultibootHeader {
-        magic: MULTIBOOT_HEADER_MAGIC,
-        flags: MultibootHeaderFlags::ALIGN_MODULES.bits()
+        magic:         MULTIBOOT_HEADER_MAGIC,
+        flags:         MultibootHeaderFlags::ALIGN_MODULES.bits()
                 | MultibootHeaderFlags::MEMORY_INFO.bits(),
-        checksum: MULTIBOOT_HEADER_MAGIC
+        checksum:      MULTIBOOT_HEADER_MAGIC
                 .wrapping_add(
                         MultibootHeaderFlags::ALIGN_MODULES.bits()
                                 | MultibootHeaderFlags::MEMORY_INFO.bits(),
                 )
                 .wrapping_neg(),
-        header_addr: 0,
-        load_addr: 0,
+        header_addr:   0,
+        load_addr:     0,
         load_end_addr: 0,
-        bss_end_addr: 0,
-        entry_addr: 0,
-        mode_type: 0,
-        width: 0,
-        height: 0,
-        depth: 0,
+        bss_end_addr:  0,
+        entry_addr:    0,
+        mode_type:     0,
+        width:         0,
+        height:        0,
+        depth:         0,
 };
 
 #[used]
@@ -87,7 +87,8 @@ _start:
 pub extern "C" fn kernel_main(
         multiboot_magic: u32,
         _mbi: &'static MultibootInfo,
-) -> ! {
+) -> !
+{
         if multiboot_magic != multiboot::BOOTLOADER_MAGIC {
                 panic!("invalid magic number at ")
         }
@@ -95,7 +96,7 @@ pub extern "C" fn kernel_main(
         #[cfg(test)]
         kernel_maintest();
 
-        println!("sizeof");
+        println!("\nsizeof\n");
 
         loop {}
 }

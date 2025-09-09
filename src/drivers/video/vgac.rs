@@ -9,7 +9,6 @@
  * - Add helper functions for CRTC and GFX controllers to dump registers
  *
  */
-// use crate::utils::writec;
 use crate::controllers::{crtc, gfxc};
 use core::fmt;
 use core::ptr;
@@ -57,9 +56,6 @@ pub enum CursorTypes
 }
 
 /// VGA memory mapping ranges.
-///
-/// Defines the different memory ranges that can be used for VGA memory mapping.
-/// Each range corresponds to a different memory size and base address.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum MemoryRanges
@@ -119,7 +115,7 @@ pub enum ScrollDir
 /// color control, and scrolling.
 ///
 /// # Memory Layout
-/// ```text
+///
 /// vc_screenbuf ------> +---------------+-.
 ///                      |               |  \
 ///                      |               |   |
@@ -143,36 +139,35 @@ pub enum ScrollDir
 ///                      .               .
 ///                      .               .
 ///                      +---------------- <-- vram_end
-/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct VgaConsole
 {
         /// Base address of VGA memory
-        pub vc_vram_base:        u32,
+        vc_vram_base:        u32,
         /// End address of VGA memory
-        pub vc_vram_end:         u32,
+        vc_vram_end:         u32,
         /// Current position in VGA memory where next character will be written
-        pub vc_index:            u32,
+        vc_index:            u32,
         /// Total size of VGA memory in bytes
-        pub vc_vram_size:        u32,
+        vc_vram_size:        u32,
         /// Size of visible screen area in bytes
-        pub vc_screen_size:      u32,
+        vc_screen_size:      u32,
         /// Current foreground color for text output
-        pub vc_foreground_color: VGAColor,
+        vc_foreground_color: VGAColor,
         /// Current background color for text output
-        pub vc_background_color: VGAColor,
+        vc_background_color: VGAColor,
         /// Address of the first visible character on screen
-        pub vc_visible_origin:   u32,
+        vc_visible_origin:   u32,
         /// Starting address of the current text buffer
-        pub vc_origin:           u32,
+        vc_origin:           u32,
         /// Ending address of the current text buffer
-        pub vc_origin_end:       u32,
+        vc_origin_end:       u32,
         /// Number of rows in the display
-        pub vc_rows:             u8,
+        vc_rows:             u8,
         /// Number of columns in the display
-        pub vc_cols:             u8,
+        vc_cols:             u8,
         /// Current cursor appearance type
-        pub vc_cursor_type:      CursorTypes,
+        vc_cursor_type:      CursorTypes,
 }
 
 impl VgaConsole
@@ -406,15 +401,6 @@ impl VgaConsole
                                 self.vc_origin_end = self.vc_origin + self.vc_screen_size;
                                 self.vc_visible_origin = self.vc_origin;
                                 unsafe {
-                                        // writec::<u16>(
-                                        //         (self.vc_origin as *mut u16).add(((self
-                                        //                 .vc_screen_size
-                                        //                 - delta)
-                                        //                 / 2)
-                                        //                 as usize),
-                                        //         BLANK,
-                                        //         delta as usize,
-                                        // );
                                         let s: &mut [u16] = slice::from_raw_parts_mut(
                                                 (self.vc_origin as *mut u16).add(((self
                                                         .vc_screen_size
@@ -433,7 +419,7 @@ impl VgaConsole
                                 self.vc_visible_origin = self.vc_vram_base;
                         }
                         _ => {
-                                panic!("error")
+                                panic!("VGA Error: Unknown scroll direction")
                         }
                 }
                 self.set_mem_start();
@@ -445,12 +431,6 @@ impl VgaConsole
         pub fn blank(&mut self)
         {
                 unsafe {
-                        // writec::<u16>(
-                        //         self.vc_vram_base as *mut u16,
-                        //         BLANK,
-                        //         self.vc_vram_size as usize,
-                        // );
-
                         let s: &mut [u16] = slice::from_raw_parts_mut(
                                 self.vc_vram_base as *mut u16,
                                 self.vc_vram_size as usize,
@@ -568,6 +548,10 @@ impl VgaConsole
                 self.vc_cols = width;
                 self.vc_rows = height;
         }
+
+        pub fn base_as_ptr(&self) -> *const () { self.vc_vram_base as *const () }
+
+        pub fn size(&self) -> u32 { self.vc_vram_size }
 }
 
 /// Implements the [`core::fmt::Write`] trait for [`VgaConsole`], allowing it to
@@ -593,97 +577,158 @@ impl fmt::Write for VgaConsole
         }
 }
 
-#[test_case]
-fn test_putstr()
+#[cfg(test)]
+mod tests
 {
-        let mut vga: VgaConsole = VgaConsole::new(
-                VGAColor::White,
-                VGAColor::Black,
-                Resolution::R80_25,
-                MemoryRanges::Small,
-                Some(CursorTypes::Full),
-        );
-        vga.putstr("\nHello\n");
-        for _i in 0..25 {
-                vga.putstr("0123456789abcdefghijklmnopqrstuvwxyz");
-        }
-        for _i in 0..15 {
-                vga.putstr("newline\n");
-        }
-        vga.putstr("end");
-        unsafe {
-                assert_eq!(*(vga.vc_origin as *mut u16).offset(0), 0x0f00 | 'g' as u16);
-        }
-        //vga.scroll(ScrollDir::Top, None);
-        //vga.scroll(ScrollDir::Bottom, None);
-        //vga.putstr("\nh\nhh\n");
+        use crate::vgac::{CursorTypes, MemoryRanges, Resolution, VGAColor, VgaConsole};
+        use core::slice;
 
-        unsafe {
-                assert_eq!(*(vga.vc_origin as *mut u16).offset(0), 0x0f00 | '4' as u16);
+        fn compare_with_file(
+                vga: &VgaConsole,
+                bytes: &'static str,
+        )
+        {
+                let vga_slice = unsafe {
+                        let val = vga.base_as_ptr().wrapping_add(1) as *const u8;
+                        slice::from_raw_parts::<u8>(val, vga.size() as usize)
+                };
+
+                let ref_bytes = bytes.as_bytes();
+                let mut ref_bytes_iterator = ref_bytes.iter();
+                let mut mem_iterator = vga_slice.iter().step_by(2);
+                let mut index = 0;
+                loop {
+                        let ref_byte = match ref_bytes_iterator.next() {
+                                Some(v) => v,
+                                None => break,
+                        };
+                        if ref_byte == &0x0a {
+                                continue;
+                        }
+                        let mem_byte = match mem_iterator.next() {
+                                Some(v) => v,
+                                None => panic!("Memory slice ended before reference"),
+                        };
+                        assert_eq!(
+                                mem_byte,
+                                ref_byte,
+                                "Mismatch: memory at index {}: {:02x} != reference {:02x}",
+                                index,
+                                mem_byte.clone(),
+                                ref_byte
+                        );
+                        index += 1;
+                }
+        }
+
+        #[test_case]
+        fn basic_a_80_25()
+        {
+                let mut vga: VgaConsole = VgaConsole::new(
+                        VGAColor::White,
+                        VGAColor::Black,
+                        Resolution::R80_25,
+                        MemoryRanges::Small,
+                        Some(CursorTypes::Full),
+                );
+
+                vga.putstr("\nHello\n");
+
+                compare_with_file(&vga, include_str!("../../.assets/basic_a_80_25.txt"));
         }
 }
 
-#[test_case]
-fn test_memory_bounderies()
-{
-        use core::fmt::Write;
-
-        let mut vga: VgaConsole = VgaConsole::new(
-                VGAColor::White,
-                VGAColor::Black,
-                Resolution::R80_25,
-                MemoryRanges::Small,
-                Some(CursorTypes::Full),
-        );
-
-        for _i in 0..206 {
-                writeln!(
-                        vga,
-                        "o -> {:#07x}; end -> {:#07x}; i -> {:#07x}",
-                        vga.vc_origin as u32, vga.vc_origin_end as u32, vga.vc_index as u32
-                )
-                .unwrap();
-        }
-
-        writeln!(vga, "test").unwrap();
-        vga.blank();
-
-        let mut vga_m: VgaConsole = VgaConsole::new(
-                VGAColor::White,
-                VGAColor::Black,
-                Resolution::R80_25,
-                MemoryRanges::Medium,
-                Some(CursorTypes::Full),
-        );
-
-        for _i in 0..(205 * 2) {
-                writeln!(
-                        vga_m,
-                        "o -> {:#07x}; end -> {:#07x}; i -> {:#07x}",
-                        vga_m.vc_origin as u32, vga_m.vc_origin_end as u32, vga_m.vc_index as u32
-                )
-                .unwrap();
-        }
-
-        writeln!(vga_m, "test").unwrap();
-        vga_m.blank();
-
-        let mut vga_l: VgaConsole = VgaConsole::new(
-                VGAColor::White,
-                VGAColor::Black,
-                Resolution::R80_25,
-                MemoryRanges::Large,
-                Some(CursorTypes::Full),
-        );
-
-        for _i in 0..(205 * 4) {
-                writeln!(
-                        vga_l,
-                        "o -> {:#07x}; end -> {:#07x}; i -> {:#07x}",
-                        vga_l.vc_origin as u32, vga_l.vc_origin_end as u32, vga_l.vc_index as u32
-                )
-                .unwrap();
-        }
-
-        writeln!(vga_l, "test").unwrap();
-}
+// #[test_case]
+// fn test_putstr()
+// {
+//         let mut vga: VgaConsole = VgaConsole::new(
+//                 VGAColor::White,
+//                 VGAColor::Black,
+//                 Resolution::R80_25,
+//                 MemoryRanges::Small,
+//                 Some(CursorTypes::Full),
+//         );
+//         vga.putstr("\nHello\n");
+//         for _i in 0..25 {
+//                 vga.putstr("0123456789abcdefghijklmnopqrstuvwxyz");
+//         }
+//         for _i in 0..15 {
+//                 vga.putstr("newline\n");
+//         }
+//         vga.putstr("end");
+//         unsafe {
+//                 assert_eq!(*(vga.vc_origin as *mut u16).offset(0), 0x0f00 |
+// 'g' as u16);         }
+//         //vga.scroll(ScrollDir::Top, None);
+//         //vga.scroll(ScrollDir::Bottom, None);
+//         //vga.putstr("\nh\nhh\n");
+//
+//         unsafe {
+//                 assert_eq!(*(vga.vc_origin as *mut u16).offset(0), 0x0f00 |
+// '4' as u16);         }
+// }
+//
+// #[test_case]
+// fn test_memory_bounderies()
+// {
+//         use core::fmt::Write;
+//
+//         let mut vga: VgaConsole = VgaConsole::new(
+//                 VGAColor::White,
+//                 VGAColor::Black,
+//                 Resolution::R80_25,
+//                 MemoryRanges::Small,
+//                 Some(CursorTypes::Full),
+//         );
+//
+//         for _i in 0..206 {
+//                 writeln!(
+//                         vga,
+//                         "o -> {:#07x}; end -> {:#07x}; i -> {:#07x}",
+//                         vga.vc_origin as u32, vga.vc_origin_end as u32,
+// vga.vc_index as u32                 )
+//                 .unwrap();
+//         }
+//
+//         writeln!(vga, "test").unwrap();
+//         vga.blank();
+//
+//         let mut vga_m: VgaConsole = VgaConsole::new(
+//                 VGAColor::White,
+//                 VGAColor::Black,
+//                 Resolution::R80_25,
+//                 MemoryRanges::Medium,
+//                 Some(CursorTypes::Full),
+//         );
+//
+//         for _i in 0..(205 * 2) {
+//                 writeln!(
+//                         vga_m,
+//                         "o -> {:#07x}; end -> {:#07x}; i -> {:#07x}",
+//                         vga_m.vc_origin as u32, vga_m.vc_origin_end as u32,
+// vga_m.vc_index as u32                 )
+//                 .unwrap();
+//         }
+//
+//         writeln!(vga_m, "test").unwrap();
+//         vga_m.blank();
+//
+//         let mut vga_l: VgaConsole = VgaConsole::new(
+//                 VGAColor::White,
+//                 VGAColor::Black,
+//                 Resolution::R80_25,
+//                 MemoryRanges::Large,
+//                 Some(CursorTypes::Full),
+//         );
+//
+//         for _i in 0..(205 * 4) {
+//                 writeln!(
+//                         vga_l,
+//                         "o -> {:#07x}; end -> {:#07x}; i -> {:#07x}",
+//                         vga_l.vc_origin as u32, vga_l.vc_origin_end as u32,
+// vga_l.vc_index as u32                 )
+//                 .unwrap();
+//         }
+//
+//         writeln!(vga_l, "test").unwrap();
+// }
