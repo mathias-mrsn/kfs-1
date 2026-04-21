@@ -1,15 +1,13 @@
+//! QEMU only supports Multiboot 1.
+//! Using Multiboot 2 requires creating an image for each compilation.
+//! On M1 systems, this involves compiling the kernel in a Docker image, which
+//! significantly increases development time. For this reason, I continue to
+//! use Multiboot 1.
+
 use core::cmp::Ordering;
 use core::fmt::Debug;
 
 use bitflags::bitflags;
-
-/*
- * QEMU only supports Multiboot 1.
- * Using Multiboot 2 requires creating an image for each compilation.
- * On M1 systems, this involves compiling the kernel in a Docker image, which
- * significantly increases development time. For this reason, I continue to
- * use Multiboot 1.
- */
 pub const MULTIBOOT_HEADER_MAGIC: u32 = 0x1BADB002;
 pub const BOOTLOADER_MAGIC: u32 = 0x2BADB002;
 

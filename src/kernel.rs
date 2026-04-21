@@ -11,7 +11,6 @@
 #![reexport_test_harness_main = "kernel_maintest"]
 #![feature(abi_x86_interrupt)]
 
-mod controllers;
 mod drivers;
 mod instructions;
 mod multiboot;
@@ -24,7 +23,6 @@ use core::mem::MaybeUninit;
 
 use multiboot::MultibootInfo;
 
-use crate::drivers::video::vgac;
 use crate::multiboot::{MULTIBOOT_HEADER_MAGIC, MultibootHeader, MultibootHeaderFlags};
 
 const STACK_SIZE: usize = 0x10000;

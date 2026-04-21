@@ -1,21 +1,24 @@
 use core::arch::asm;
 
-/// Disables CPU interrupts (Clear Interrupt Flag)
+/// Disables maskable interrupts on the current CPU.
 ///
 /// # Safety
-/// This function is unsafe as it directly manipulates CPU interrupt state
+/// The caller must ensure that interrupts may be disabled here without
+/// breaking kernel synchronization, forward progress, or interrupt-handling
+/// invariants.
 #[inline]
 pub unsafe fn cli()
 {
-    asm!("cli", options(readonly, nostack, preserves_flags));
+        asm!("cli", options(readonly, nostack, preserves_flags));
 }
 
-/// Enables CPU interrupts (Set Interrupt Flag)
+/// Enables maskable interrupts on the current CPU.
 ///
 /// # Safety
-/// This function is unsafe as it directly manipulates CPU interrupt state
+/// The caller must ensure that interrupt handlers may safely run after this
+/// point and that all required CPU and kernel state has been initialized.
 #[inline]
 pub unsafe fn sti()
 {
-    asm!("sti", options(readonly, nostack, preserves_flags));
+        asm!("sti", options(readonly, nostack, preserves_flags));
 }
