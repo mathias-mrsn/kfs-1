@@ -1,2 +1,0 @@
-- create a node struct
-- in the memory module. create function min_low_pfn, etc.
