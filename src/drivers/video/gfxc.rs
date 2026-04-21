@@ -16,6 +16,8 @@
 //! register value is read or written through the data port. Because of this,
 //! Graphics Controller accesses must not be interleaved with other VGA register
 //! accesses.
+//!
+//! Reference: http://www.osdever.net/FreeVGA/vga/graphreg.htm
 
 use crate::instructions::io::{inb, outb};
 
