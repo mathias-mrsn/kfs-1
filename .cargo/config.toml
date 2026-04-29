@@ -8,3 +8,6 @@ target = "./arch/i386-unknown-none/target/i386-unknown-none.json"
 [target.i386-unknown-none]
 runner = "./scripts/qemu.sh"
 
+[alias]
+debug = ["run", "--config", "target.i386-unknown-none.runner='./scripts/gdb.sh'"]
+debug-test = ["test", "--config", "target.i386-unknown-none.runner='./scripts/gdb.sh'"]

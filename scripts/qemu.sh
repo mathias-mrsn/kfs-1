@@ -1,21 +1,28 @@
 #!/bin/sh
 
+ARGS="-kernel \"$1\""
+ARGS="$ARGS -device isa-debug-exit,iobase=0xf4,iosize=0x04"
+ARGS="$ARGS -m 4G"
+
 if [ "${CI:-}" = "true" ]; then
-  qemu-system-i386 \
-    -kernel "$1" \
-    -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
-    -display none \
-    -monitor none \
-    -no-reboot \
-    -m 4G
+        ARGS="$ARGS -display none"
+        ARGS="$ARGS -monitor none"
+        ARGS="$ARGS -no-reboot"
 else
-  qemu-system-i386 \
-    -kernel "$1" \
-    -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
-    -monitor stdio \
-    -m 4G
+        case "$(uname -s)" in
+        Darwin)
+                ARGS="$ARGS -display cocoa,zoom-to-fit=on"
+                ;;
+        Linux)
+                ARGS="$ARGS -display gtk,zoom-to-fit=on"
+                ;;
+        esac
+
+        ARGS="$ARGS -monitor stdio"
 fi
 
+eval "qemu-system-i386 $ARGS"
+
 if [ $? -ne 33 ]; then
-  exit 1
+        exit 1
 fi
