@@ -6,13 +6,13 @@ const EXIT_IO_PORT: u16 = 0xf4;
 #[repr(u32)]
 pub enum QemuExitCode
 {
-        Success = 0x10,
-        Failed  = 0x11,
+    Success = 0x10,
+    Failed  = 0x11,
 }
 
 pub fn exit(code: QemuExitCode)
 {
-        unsafe {
-                outdw(EXIT_IO_PORT, code as u32);
-        }
+    unsafe {
+        outdw(EXIT_IO_PORT, code as u32);
+    }
 }

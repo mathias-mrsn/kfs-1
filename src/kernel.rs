@@ -30,24 +30,23 @@ const STACK_SIZE: usize = 0x10000;
 #[used]
 #[unsafe(link_section = ".multiboot")]
 pub static MULTIBOOT_HEADER: MultibootHeader = MultibootHeader {
-        magic:         MULTIBOOT_HEADER_MAGIC,
-        flags:         MultibootHeaderFlags::ALIGN_MODULES.bits()
-                | MultibootHeaderFlags::MEMORY_INFO.bits(),
-        checksum:      MULTIBOOT_HEADER_MAGIC
-                .wrapping_add(
-                        MultibootHeaderFlags::ALIGN_MODULES.bits()
-                                | MultibootHeaderFlags::MEMORY_INFO.bits(),
-                )
-                .wrapping_neg(),
-        header_addr:   0,
-        load_addr:     0,
-        load_end_addr: 0,
-        bss_end_addr:  0,
-        entry_addr:    0,
-        mode_type:     0,
-        width:         0,
-        height:        0,
-        depth:         0,
+    magic:         MULTIBOOT_HEADER_MAGIC,
+    flags:         MultibootHeaderFlags::ALIGN_MODULES.bits()
+        | MultibootHeaderFlags::MEMORY_INFO.bits(),
+    checksum:      MULTIBOOT_HEADER_MAGIC
+        .wrapping_add(
+            MultibootHeaderFlags::ALIGN_MODULES.bits() | MultibootHeaderFlags::MEMORY_INFO.bits(),
+        )
+        .wrapping_neg(),
+    header_addr:   0,
+    load_addr:     0,
+    load_end_addr: 0,
+    bss_end_addr:  0,
+    entry_addr:    0,
+    mode_type:     0,
+    width:         0,
+    height:        0,
+    depth:         0,
 };
 
 #[used]
@@ -55,7 +54,7 @@ pub static MULTIBOOT_HEADER: MultibootHeader = MultibootHeader {
 static mut STACK: [MaybeUninit<u8>; STACK_SIZE] = [MaybeUninit::uninit(); STACK_SIZE];
 
 unsafe extern "C" {
-        fn _start();
+    fn _start();
 }
 
 global_asm!(
@@ -83,18 +82,22 @@ _start:
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main(
-        multiboot_magic: u32,
-        _mbi: &'static MultibootInfo,
+    multiboot_magic: u32,
+    _mbi: &'static MultibootInfo,
 ) -> !
 {
-        if multiboot_magic != multiboot::BOOTLOADER_MAGIC {
-                panic!("invalid magic number at ")
-        }
+    if multiboot_magic != multiboot::BOOTLOADER_MAGIC {
+        panic!("invalid magic number at ")
+    }
 
-        #[cfg(test)]
-        kernel_maintest();
+    #[cfg(test)]
+    kernel_maintest();
 
-        println!("\nsizeof\n");
+    for i in 0..=27 {
+        let ch = char::from(b'0' + u8::try_from(i % 10).unwrap());
+        println!("---{ch}")
+    }
+    print!("---");
 
-        loop {}
+    loop {}
 }

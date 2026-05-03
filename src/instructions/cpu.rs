@@ -9,7 +9,7 @@ use core::arch::asm;
 #[inline]
 pub unsafe fn cli()
 {
-        asm!("cli", options(readonly, nostack, preserves_flags));
+    asm!("cli", options(readonly, nostack, preserves_flags));
 }
 
 /// Enables maskable interrupts on the current CPU.
@@ -20,5 +20,5 @@ pub unsafe fn cli()
 #[inline]
 pub unsafe fn sti()
 {
-        asm!("sti", options(readonly, nostack, preserves_flags));
+    asm!("sti", options(readonly, nostack, preserves_flags));
 }

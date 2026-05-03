@@ -28,11 +28,11 @@ use core::arch::asm;
 #[inline(always)]
 pub unsafe fn inb(port: u16) -> u8
 {
-        let output: u8;
-        unsafe {
-                asm!("in al, dx", out("al") output, in("dx") port);
-        }
-        output
+    let output: u8;
+    unsafe {
+        asm!("in al, dx", out("al") output, in("dx") port);
+    }
+    output
 }
 
 /// Reads one 32-bit double word from the specified I/O port.
@@ -42,11 +42,11 @@ pub unsafe fn inb(port: u16) -> u8
 /// performing this access is safe for the current hardware state.
 #[inline(always)]
 pub unsafe fn outb(
-        port: u16,
-        value: u8,
+    port: u16,
+    value: u8,
 )
 {
-        asm!("out dx, al", in("dx") port, in("al") value);
+    asm!("out dx, al", in("dx") port, in("al") value);
 }
 
 /// Reads one byte from the specified I/O port.
@@ -57,11 +57,11 @@ pub unsafe fn outb(
 #[inline(always)]
 pub unsafe fn inw(port: u16) -> u16
 {
-        let output: u16;
-        unsafe {
-                asm!("in ax, dx", out("ax") output, in("dx") port);
-        }
-        output
+    let output: u16;
+    unsafe {
+        asm!("in ax, dx", out("ax") output, in("dx") port);
+    }
+    output
 }
 
 /// Writes one byte to the specified I/O port.
@@ -71,11 +71,11 @@ pub unsafe fn inw(port: u16) -> u16
 /// performing this access is safe for the current hardware state.
 #[inline(always)]
 pub unsafe fn outw(
-        port: u16,
-        value: u16,
+    port: u16,
+    value: u16,
 )
 {
-        asm!("out dx, ax", in("dx") port, in("ax") value);
+    asm!("out dx, ax", in("dx") port, in("ax") value);
 }
 
 /// Reads one 16-bit word from the specified I/O port.
@@ -86,11 +86,11 @@ pub unsafe fn outw(
 #[inline(always)]
 pub unsafe fn indw(port: u16) -> u32
 {
-        let output: u32;
-        unsafe {
-                asm!("in eax, dx", out("eax") output, in("dx") port);
-        }
-        output
+    let output: u32;
+    unsafe {
+        asm!("in eax, dx", out("eax") output, in("dx") port);
+    }
+    output
 }
 
 /// Writes one 16-bit word to the specified I/O port.
@@ -100,9 +100,9 @@ pub unsafe fn indw(port: u16) -> u32
 /// performing this access is safe for the current hardware state.
 #[inline(always)]
 pub unsafe fn outdw(
-        port: u16,
-        value: u32,
+    port: u16,
+    value: u32,
 )
 {
-        asm!("out dx, eax", in("dx") port, in("eax") value);
+    asm!("out dx, eax", in("dx") port, in("eax") value);
 }
