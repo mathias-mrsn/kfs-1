@@ -1,9 +1,3 @@
-//! TODO: Add current line number and total line count to status line.
-//!
-//! Ideas for implementation:
-//! - Create split screen mode.
-//! - Add helper functions for CRTC and GFX controllers to dump registers.
-//!
 //! VGA text mode console driver that provides basic text output functionality
 //!
 //! This structure manages a VGA text mode console by maintaining the state of
@@ -37,6 +31,7 @@
 //!                      .               .
 //!                      .               .
 //!                      +---------------- <-- vram_end
+//!
 use core::fmt;
 use core::ptr;
 use core::slice;
@@ -45,6 +40,7 @@ use super::{crtc, gfxc};
 
 /// Default 16-bit word for clearing VGA text mode memory.
 const BLANK: u16 = 0x0720;
+const VGA_CELL_SIZE: usize = core::mem::size_of::<u16>();
 /// Bit masks for enabling and disabling the VGA text mode cursor by using the
 /// CRTC CursorStart Register.
 const CURSOR_ENABLE_MASK: u8 = 0xdf;
@@ -96,7 +92,7 @@ impl CursorType
     {
         match self {
             CursorType::Full => (0, max_scanline),
-            CursorType::LowerHalf => (((max_scanline + 1) / 2), max_scanline),
+            CursorType::LowerHalf => (max_scanline.div_ceil(2), max_scanline),
             CursorType::LowerThird => ((((max_scanline + 1) * 2) / 3), max_scanline),
             CursorType::Underline => (max_scanline, max_scanline),
             CursorType::None => (0, 0),
@@ -310,6 +306,13 @@ impl VgaConsole
 
     #[inline(always)]
     fn line_stride(&self) -> usize { self.cols * core::mem::size_of::<u16>() }
+
+    #[inline(always)]
+    fn user_visible_rows(&self) -> usize
+    {
+        self.rows
+            .saturating_sub(usize::from(self.status_line_enabled))
+    }
 
     #[inline(always)]
     fn page_stride(&self) -> usize
@@ -609,7 +612,9 @@ impl VgaConsole
             "VGA invariant violated: visible_origin is out of bounds"
         );
         debug_assert!(
-            self.visible_origin.is_multiple_of(line_stride),
+            self.visible_origin
+                .checked_sub(self.user_base)
+                .is_some_and(|offset| offset.is_multiple_of(line_stride)),
             "VGA invariant violated: visible_origin is not line-aligned"
         );
         self.update_status_line();
@@ -767,8 +772,32 @@ impl VgaConsole
         height: usize,
     )
     {
-        assert!(width > 0, "VGA Error: width must be greater than 0");
-        assert!(height > 0, "VGA Error: height must be greater than 0");
+        assert!(width > 5, "VGA Error: width must be greater than 5");
+        assert!(height > 5, "VGA Error: height must be greater than 5");
+
+        let total_vram_size = self
+            .vram_end
+            .checked_sub(self.phys_base)
+            .expect("VGA invariant violated: vram_end is below phys_base");
+        let line_stride = width
+            .checked_mul(core::mem::size_of::<u16>())
+            .expect("VGA Error: line stride overflow");
+        let user_base = self
+            .phys_base
+            .checked_add(line_stride)
+            .expect("VGA Error: user base overflow");
+        let vram_size = total_vram_size
+            .checked_sub(line_stride)
+            .expect("VGA Error: line stride is larger than VRAM size");
+        let screen_size = width
+            .checked_mul(height)
+            .and_then(|cells| cells.checked_mul(core::mem::size_of::<u16>()))
+            .expect("VGA Error: screen size overflow");
+
+        assert!(
+            screen_size <= vram_size,
+            "VGA Error: screen size exceeds VRAM size"
+        );
 
         let mut vertical_display_end = height
             .checked_mul(self.scanlines_per_row())
@@ -810,8 +839,28 @@ impl VgaConsole
             // Restore the original protection state.
             crtc::write(crtc::Register::VerticalRetraceEnd, vertical_retrace_end);
         }
+
+        let status_line_enabled = self.status_line_enabled;
+
         self.cols = width;
         self.rows = height;
+        self.user_base = user_base;
+        self.vram_size = vram_size;
+        self.screen_size = screen_size;
+
+        self.origin = user_base;
+        self.visible_origin = user_base;
+        self.index = user_base;
+        self.origin_end = user_base + screen_size;
+        self.visual_mode = Mode::Terminal;
+
+        if status_line_enabled {
+            self.enable_status_line();
+        } else {
+            self.disable_status_line();
+        }
+
+        self.blank();
     }
 
     fn base_as_ptr(&self) -> *const () { self.user_base as *const () }
@@ -909,10 +958,6 @@ impl VgaConsole
 
     fn update_status_line(&mut self)
     {
-        if self.status_line_enabled == false {
-            return;
-        }
-
         let left_text = self.visual_mode.as_status_text().as_bytes();
         let fg = self.status_line_text_color as u16;
         let bg = self.status_line_bg_color as u16;
@@ -959,6 +1004,18 @@ impl fmt::Write for VgaConsole
 #[cfg(test)]
 mod tests
 {
+    fn write_cell(
+        ptr: usize,
+        index: usize,
+        value: u16,
+    )
+    {
+        unsafe {
+            // SAFETY: The test writes one 16-bit cell into the VGA text buffer.
+            *((ptr as *mut u16).add(index)) = value;
+        }
+    }
+
     fn read_cell(
         ptr: usize,
         index: usize,
@@ -970,108 +1027,858 @@ mod tests
         }
     }
 
-    mod writting
+    fn make_console() -> super::super::VgaConsole
+    {
+        use super::{CursorType, MemoryRanges, Resolution, VGAColor, VgaConsole};
+
+        VgaConsole::new(
+            VGAColor::White,
+            VGAColor::Black,
+            VGAColor::Black,
+            VGAColor::Yellow,
+            Resolution::R80_25,
+            MemoryRanges::Small,
+            CursorType::None,
+        )
+    }
+
+    fn styled_cell(
+        ch: u8,
+        fg: super::VGAColor,
+        bg: super::VGAColor,
+    ) -> u16
+    {
+        (ch as u16) | ((fg as u16) << 8) | ((bg as u16) << 12)
+    }
+
+    fn assert_status_line_text(
+        c: &super::VgaConsole,
+        text: &str,
+        fg: super::VGAColor,
+        bg: super::VGAColor,
+    )
+    {
+        for (index, byte) in text.bytes().enumerate() {
+            assert_eq!(
+                read_cell(c.phys_base, index),
+                styled_cell(byte, fg, bg),
+                "status line mismatch at cell {index}",
+            );
+        }
+
+        if text.len() < c.cols {
+            assert_eq!(
+                read_cell(c.phys_base, text.len()),
+                styled_cell(b' ', fg, bg),
+                "status line trailing cell should be blank",
+            );
+        }
+    }
+
+    fn assert_user_region_blank(c: &super::VgaConsole)
+    {
+        for index in 0..(c.vram_size / core::mem::size_of::<u16>()) {
+            assert_eq!(read_cell(c.user_base, index), super::BLANK, "cell {index}");
+        }
+    }
+
+    mod writing
     {
         #[test_case]
         fn write_basic_characters()
         {
-            use super::super::{CursorType, MemoryRanges, Resolution, VGAColor, VgaConsole};
-            use super::read_cell;
+            use super::super::VGAColor;
+            use super::{make_console, read_cell};
             use core::fmt::Write;
 
-            let mut c = VgaConsole::new(
-                VGAColor::White,
-                VGAColor::Black,
-                VGAColor::Black,
-                VGAColor::Yellow,
-                Resolution::R80_25,
-                MemoryRanges::Small,
-                CursorType::None,
-            );
-            for i in 0..=c.rows {
+            let mut c = make_console();
+            for i in 0..=c.cols * c.rows {
                 let ch = char::from(b'0' + u8::try_from(i % 10).unwrap());
-                writeln!(c, "{ch}").unwrap();
+                write!(c, "{ch}").unwrap();
             }
-            let first_visible = read_cell(c.visible_origin, 0);
-            let expected_first_visible = ('1' as u16) | ((VGAColor::White as u16) << 8);
             assert_eq!(
-                first_visible, expected_first_visible,
-                "after writing one line past the screen height, the first visible row should be \
-                 the second written row",
+                read_cell(c.visible_origin, 0),
+                ('0' as u16) | ((VGAColor::White as u16) << 8)
             );
             assert_eq!(
-                c.visible_origin, c.origin,
-                "after automatic scroll, the visible origin should follow the active origin",
+                read_cell(c.visible_origin, c.cols - 1),
+                ('9' as u16) | ((VGAColor::White as u16) << 8)
+            );
+            assert_eq!(
+                read_cell(c.visible_origin, ((c.rows - 1) * c.cols) - 1),
+                ('9' as u16) | ((VGAColor::White as u16) << 8)
             );
         }
+    }
 
+    mod start_of_line
+    {
         #[test_case]
-        fn write_basic_characters()
+        fn returns_current_line_base_for_multiple_positions()
         {
-            use super::super::{CursorType, MemoryRanges, Resolution, VGAColor, VgaConsole};
-            use super::read_cell;
-            use core::fmt::Write;
+            use super::super::VGA_CELL_SIZE;
+            use super::make_console;
 
-            let mut c = VgaConsole::new(
-                VGAColor::White,
-                VGAColor::Black,
-                VGAColor::Black,
-                VGAColor::Yellow,
-                Resolution::R80_25,
-                MemoryRanges::Small,
-                CursorType::None,
-            );
-            for i in 0..=c.cols {
-                let ch = char::from(b'0' + u8::try_from(i % 10).unwrap());
-                writeln!(c, "{ch}\n").unwrap();
+            let mut c = make_console();
+            let line_stride = c.line_stride();
+            let target_line = 7;
+            let line_start = c.user_base + (target_line * line_stride);
+            let original_index = c.index;
+
+            for (case, position) in [
+                ("start", line_start),
+                ("after_first_cell", line_start + VGA_CELL_SIZE),
+                ("middle", line_start + ((c.cols / 2) * VGA_CELL_SIZE)),
+                (
+                    "before_last_cell",
+                    line_start + ((c.cols - 2) * VGA_CELL_SIZE),
+                ),
+                ("end", line_start + line_stride - VGA_CELL_SIZE),
+            ] {
+                assert_eq!(c.start_of_line(position), line_start, "case: {case}");
+                assert_eq!(c.index, original_index, "case: {case}");
             }
-            let first_visible = read_cell(c.visible_origin, c.cols * 5);
-            let expected_first_visible = ('4' as u16) | ((VGAColor::White as u16) << 8);
+        }
+    }
+
+    mod user_visible_rows
+    {
+        #[test_case]
+        fn returns_total_rows_when_status_line_is_disabled()
+        {
+            let mut c = super::make_console();
+
+            c.disable_status_line();
+
+            assert_eq!(c.user_visible_rows(), c.rows);
+        }
+
+        #[test_case]
+        fn returns_one_less_row_when_status_line_is_enabled()
+        {
+            let mut c = super::make_console();
+
+            c.enable_status_line();
+
+            assert_eq!(c.user_visible_rows(), c.rows - 1);
+        }
+    }
+
+    mod newlines
+    {
+        #[test_case]
+        fn moves_to_next_row_when_screen_has_space()
+        {
+            use super::super::VGA_CELL_SIZE;
+            use super::make_console;
+
+            let c = make_console();
+            let line_stride = c.line_stride();
+            let middle_offset = (c.cols / 2) * VGA_CELL_SIZE;
+            let end_offset = line_stride - VGA_CELL_SIZE;
+
+            for (case, offset) in [("start", 0), ("middle", middle_offset), ("end", end_offset)] {
+                let mut c = make_console();
+                let old_origin = c.origin;
+                let old_visible_origin = c.visible_origin;
+                let old_origin_end = c.origin_end;
+
+                c.index = c.user_base + offset;
+                c.new_line();
+
+                assert_eq!(c.index, c.user_base + line_stride, "case: {case}");
+                assert_eq!(c.origin, old_origin, "case: {case}");
+                assert_eq!(c.visible_origin, old_visible_origin, "case: {case}");
+                assert_eq!(c.origin_end, old_origin_end, "case: {case}");
+            }
+        }
+
+        #[test_case]
+        fn uses_backing_store_when_screen_is_full()
+        {
+            use super::super::BLANK;
+            use super::super::VGA_CELL_SIZE;
+            use super::{make_console, read_cell, write_cell};
+
+            let c = make_console();
+            let line_stride = c.line_stride();
+            let middle_offset = (c.cols / 2) * VGA_CELL_SIZE;
+            let end_offset = line_stride - VGA_CELL_SIZE;
+
+            for (case, offset) in [("start", 0), ("middle", middle_offset), ("end", end_offset)] {
+                let mut c = make_console();
+                let old_origin = c.origin;
+                let old_origin_end = c.origin_end;
+                let last_row_start = old_origin_end - line_stride;
+
+                write_cell(old_origin, 0, 'A' as u16);
+                write_cell(old_origin + line_stride, 0, 'B' as u16);
+                write_cell(old_origin_end, 0, 'Z' as u16);
+
+                c.index = last_row_start + offset;
+                c.new_line();
+
+                assert_eq!(c.origin, old_origin + line_stride, "case: {case}");
+                assert_eq!(c.visible_origin, old_origin + line_stride, "case: {case}");
+                assert_eq!(c.origin_end, old_origin_end + line_stride, "case: {case}");
+                assert_eq!(c.index, old_origin_end, "case: {case}");
+                assert_eq!(read_cell(c.visible_origin, 0), 'B' as u16, "case: {case}");
+                assert_eq!(read_cell(c.index, 0), BLANK, "case: {case}");
+            }
+        }
+
+        #[test_case]
+        fn scrolls_in_place_at_end_of_vram()
+        {
+            use super::super::BLANK;
+            use super::super::VGA_CELL_SIZE;
+            use super::{make_console, read_cell, write_cell};
+
+            let c = make_console();
+            let line_stride = c.line_stride();
+            let middle_offset = (c.cols / 2) * VGA_CELL_SIZE;
+            let end_offset = line_stride - VGA_CELL_SIZE;
+
+            for (case, offset) in [("start", 0), ("middle", middle_offset), ("end", end_offset)] {
+                let mut c = make_console();
+                let old_origin_end = c.origin_end;
+                let last_row_start = old_origin_end - line_stride;
+
+                write_cell(c.user_base, 0, 'A' as u16);
+                write_cell(c.user_base + line_stride, 0, 'B' as u16);
+                write_cell(last_row_start, 0, 'Y' as u16);
+
+                c.vram_end = old_origin_end;
+                c.index = last_row_start + offset;
+                c.new_line();
+
+                assert_eq!(c.origin, c.user_base, "case: {case}");
+                assert_eq!(c.visible_origin, c.user_base, "case: {case}");
+                assert_eq!(c.origin_end, c.user_base + c.screen_size, "case: {case}");
+                assert_eq!(c.index, c.origin_end - line_stride, "case: {case}");
+                assert_eq!(read_cell(c.visible_origin, 0), 'B' as u16, "case: {case}");
+                assert_eq!(read_cell(c.index, 0), BLANK, "case: {case}");
+            }
+        }
+    }
+
+    mod set_mem_start
+    {
+        #[test_case]
+        fn writes_expected_start_address_registers()
+        {
+            use super::super::crtc;
+            use super::make_console;
+
+            let mut c = make_console();
+            let line_stride = c.line_stride();
+            let visible_origin = c.user_base + (3 * line_stride);
+
+            c.visible_origin = visible_origin;
+            c.set_mem_start();
+
+            let start = (u16::from(crtc::read(crtc::Register::StartAddressHigh)) << 8)
+                | u16::from(crtc::read(crtc::Register::StartAddressLow));
+
+            assert_eq!(start, ((visible_origin - c.phys_base) / 2) as u16);
+        }
+    }
+
+    mod scroll_view
+    {
+        #[test_case]
+        fn line_up_updates_visible_origin_and_status_line()
+        {
+            use super::super::Mode;
+            use super::{
+                assert_status_line_text, make_console, read_cell, styled_cell, write_cell,
+            };
+
+            let mut c = make_console();
+            let line_stride = c.cols * core::mem::size_of::<u16>();
+            let origin = c.user_base + (8 * line_stride);
+            let visible_origin = c.user_base + (5 * line_stride);
+
+            for line in 0..=8 {
+                let byte = b'0' + u8::try_from(line).unwrap();
+                write_cell(
+                    c.user_base + (line * line_stride),
+                    0,
+                    styled_cell(byte, c.foreground_color, c.background_color),
+                );
+            }
+
+            c.origin = origin;
+            c.origin_end = origin + c.screen_size;
+            c.visible_origin = visible_origin;
+
+            c.scroll_view(super::super::VisualAction::ViewLinesUp(2));
+
+            assert_eq!(c.visible_origin, c.user_base + (3 * line_stride));
+            assert_eq!(c.visual_mode, Mode::Visual);
             assert_eq!(
-                first_visible, expected_first_visible,
-                "after writing one line past the screen height, the first visible row should be \
-                 the second written row",
+                read_cell(c.visible_origin, 0),
+                styled_cell(b'3', c.foreground_color, c.background_color)
             );
-            // assert_eq!(
-            //     c.visible_origin, c.origin,
-            //     "after automatic scroll, the visible origin should follow the
-            // active origin", );
+            assert_status_line_text(
+                &c,
+                Mode::Visual.as_status_text(),
+                c.status_line_text_color,
+                c.status_line_bg_color,
+            );
         }
 
         #[test_case]
-        fn visual_scroll_down()
+        fn line_down_moves_towards_output_origin()
         {
-            use super::super::*;
+            use super::{make_console, read_cell, styled_cell, write_cell};
 
-            let mut c: VgaConsole = VgaConsole::new(
-                VGAColor::White,
-                VGAColor::Black,
-                VGAColor::Black,
-                VGAColor::Yellow,
-                Resolution::R80_25,
-                MemoryRanges::Small,
-                CursorType::None,
+            let mut c = make_console();
+            let line_stride = c.cols * core::mem::size_of::<u16>();
+            let origin = c.user_base + (8 * line_stride);
+            let visible_origin = c.user_base + (2 * line_stride);
+
+            for line in 0..=8 {
+                let byte = b'0' + u8::try_from(line).unwrap();
+                write_cell(
+                    c.user_base + (line * line_stride),
+                    0,
+                    styled_cell(byte, c.foreground_color, c.background_color),
+                );
+            }
+
+            c.origin = origin;
+            c.origin_end = origin + c.screen_size;
+            c.visible_origin = visible_origin;
+
+            c.scroll_view(super::super::VisualAction::ViewLinesDown(3));
+
+            assert_eq!(c.visible_origin, c.user_base + (5 * line_stride));
+            assert_eq!(
+                read_cell(c.visible_origin, 0),
+                styled_cell(b'5', c.foreground_color, c.background_color)
             );
-
-            c.putstr("Line 1Line 2Line 3Line 4Line 5");
         }
 
         #[test_case]
-        fn visual_scroll_up()
+        fn page_up_clamps_to_top()
         {
-            use super::super::*;
+            use super::{make_console, read_cell, styled_cell, write_cell};
 
-            let mut c: VgaConsole = VgaConsole::new(
-                VGAColor::White,
-                VGAColor::Black,
-                VGAColor::Black,
-                VGAColor::Yellow,
-                Resolution::R80_25,
-                MemoryRanges::Small,
-                CursorType::None,
+            let mut c = make_console();
+            let line_stride = c.cols * core::mem::size_of::<u16>();
+            let origin = c.user_base + (30 * line_stride);
+            let visible_origin = c.user_base + (10 * line_stride);
+
+            for line in 0..=30 {
+                let byte = b'A' + u8::try_from(line % 26).unwrap();
+                write_cell(
+                    c.user_base + (line * line_stride),
+                    0,
+                    styled_cell(byte, c.foreground_color, c.background_color),
+                );
+            }
+
+            c.origin = origin;
+            c.origin_end = origin + c.screen_size;
+            c.visible_origin = visible_origin;
+
+            c.scroll_view(super::super::VisualAction::ViewPagesUp(1));
+
+            assert_eq!(c.visible_origin, c.user_base);
+            assert_eq!(
+                read_cell(c.visible_origin, 0),
+                styled_cell(b'A', c.foreground_color, c.background_color)
+            );
+        }
+
+        #[test_case]
+        fn page_down_moves_by_a_full_screen()
+        {
+            use super::{make_console, read_cell, styled_cell, write_cell};
+
+            let mut c = make_console();
+            let line_stride = c.cols * core::mem::size_of::<u16>();
+            let origin = c.user_base + (40 * line_stride);
+            let visible_origin = c.user_base + (2 * line_stride);
+
+            for line in 0..=40 {
+                let byte = b'A' + u8::try_from(line % 26).unwrap();
+                write_cell(
+                    c.user_base + (line * line_stride),
+                    0,
+                    styled_cell(byte, c.foreground_color, c.background_color),
+                );
+            }
+
+            c.origin = origin;
+            c.origin_end = origin + c.screen_size;
+            c.visible_origin = visible_origin;
+
+            c.scroll_view(super::super::VisualAction::ViewPagesDown(1));
+
+            assert_eq!(c.visible_origin, visible_origin + c.screen_size);
+            assert_eq!(
+                read_cell(c.visible_origin, 0),
+                styled_cell(b'B', c.foreground_color, c.background_color)
+            );
+        }
+
+        #[test_case]
+        fn to_top_moves_to_first_visible_line()
+        {
+            use super::{make_console, read_cell, styled_cell, write_cell};
+
+            let mut c = make_console();
+            let line_stride = c.cols * core::mem::size_of::<u16>();
+            let origin = c.user_base + (12 * line_stride);
+            let visible_origin = c.user_base + (7 * line_stride);
+
+            for line in 0..=12 {
+                let byte = b'0' + u8::try_from(line % 10).unwrap();
+                write_cell(
+                    c.user_base + (line * line_stride),
+                    0,
+                    styled_cell(byte, c.foreground_color, c.background_color),
+                );
+            }
+
+            c.origin = origin;
+            c.origin_end = origin + c.screen_size;
+            c.visible_origin = visible_origin;
+
+            c.scroll_view(super::super::VisualAction::ToTop);
+
+            assert_eq!(c.visible_origin, c.user_base);
+            assert_eq!(
+                read_cell(c.visible_origin, 0),
+                styled_cell(b'0', c.foreground_color, c.background_color)
+            );
+        }
+
+        #[test_case]
+        fn to_bottom_moves_to_output_origin()
+        {
+            use super::{make_console, read_cell, styled_cell, write_cell};
+
+            let mut c = make_console();
+            let line_stride = c.cols * core::mem::size_of::<u16>();
+            let origin = c.user_base + (12 * line_stride);
+            let visible_origin = c.user_base + (2 * line_stride);
+
+            for line in 0..=12 {
+                let byte = b'0' + u8::try_from(line % 10).unwrap();
+                write_cell(
+                    c.user_base + (line * line_stride),
+                    0,
+                    styled_cell(byte, c.foreground_color, c.background_color),
+                );
+            }
+
+            c.origin = origin;
+            c.origin_end = origin + c.screen_size;
+            c.visible_origin = visible_origin;
+
+            c.scroll_view(super::super::VisualAction::ToBottom);
+
+            assert_eq!(c.visible_origin, origin);
+            assert_eq!(
+                read_cell(c.visible_origin, 0),
+                styled_cell(b'2', c.foreground_color, c.background_color)
+            );
+        }
+
+        #[test_case]
+        fn follow_output_restores_terminal_mode_and_status_line()
+        {
+            use super::super::Mode;
+            use super::{
+                assert_status_line_text, make_console, read_cell, styled_cell, write_cell,
+            };
+
+            let mut c = make_console();
+            let line_stride = c.cols * core::mem::size_of::<u16>();
+            let origin = c.user_base + (30 * line_stride);
+            let visible_origin = c.user_base + (5 * line_stride);
+            let current_line_start = c.user_base + (28 * line_stride);
+
+            for line in 0..=30 {
+                let byte = b'A' + u8::try_from(line % 26).unwrap();
+                write_cell(
+                    c.user_base + (line * line_stride),
+                    0,
+                    styled_cell(byte, c.foreground_color, c.background_color),
+                );
+            }
+
+            c.origin = origin;
+            c.origin_end = origin + c.screen_size;
+            c.visible_origin = visible_origin;
+            c.index = current_line_start + (3 * core::mem::size_of::<u16>());
+
+            c.scroll_view(super::super::VisualAction::FollowOutput);
+
+            assert_eq!(c.visible_origin, c.user_base + (4 * line_stride));
+            assert_eq!(c.visual_mode, Mode::Terminal);
+            assert_eq!(
+                read_cell(c.visible_origin, 0),
+                styled_cell(b'E', c.foreground_color, c.background_color)
+            );
+            assert_status_line_text(
+                &c,
+                Mode::Terminal.as_status_text(),
+                c.status_line_text_color,
+                c.status_line_bg_color,
+            );
+        }
+    }
+
+    mod blank
+    {
+        fn assert_blank_state(c: &super::super::VgaConsole)
+        {
+            use super::super::Mode;
+            use super::super::crtc;
+            use super::{assert_status_line_text, assert_user_region_blank};
+
+            assert_eq!(c.origin, c.user_base);
+            assert_eq!(c.visible_origin, c.user_base);
+            assert_eq!(c.index, c.user_base);
+            assert_eq!(c.origin_end, c.user_base + c.screen_size);
+            assert_eq!(c.visual_mode, Mode::Terminal);
+            assert_user_region_blank(c);
+
+            let start = (u16::from(crtc::read(crtc::Register::StartAddressHigh)) << 8)
+                | u16::from(crtc::read(crtc::Register::StartAddressLow));
+            let cursor = (u16::from(crtc::read(crtc::Register::CursorLocationHigh)) << 8)
+                | u16::from(crtc::read(crtc::Register::CursorLocationLow));
+
+            assert_eq!(start, ((c.user_base - c.phys_base) / 2) as u16);
+            assert_eq!(cursor, ((c.user_base - c.phys_base) / 2) as u16);
+            assert_status_line_text(
+                c,
+                Mode::Terminal.as_status_text(),
+                c.status_line_text_color,
+                c.status_line_bg_color,
+            );
+        }
+
+        #[test_case]
+        fn clears_a_fresh_buffer()
+        {
+            let mut c = super::make_console();
+
+            c.blank();
+
+            assert_blank_state(&c);
+        }
+
+        #[test_case]
+        fn clears_buffer_after_plain_text_output()
+        {
+            let mut c = super::make_console();
+
+            c.putstr("hello\nworld\nmore text");
+            c.blank();
+
+            assert_blank_state(&c);
+        }
+
+        #[test_case]
+        fn clears_buffer_with_colored_cells_and_scrolled_state()
+        {
+            use super::super::{Mode, VGAColor};
+            use super::{styled_cell, write_cell};
+
+            let mut c = super::make_console();
+            let line_stride = c.cols * core::mem::size_of::<u16>();
+
+            write_cell(
+                c.user_base,
+                0,
+                styled_cell(b'A', VGAColor::LightRed, VGAColor::Blue),
+            );
+            write_cell(
+                c.user_base,
+                1,
+                styled_cell(b'B', VGAColor::Yellow, VGAColor::Red),
+            );
+            write_cell(
+                c.user_base + (3 * line_stride),
+                5,
+                styled_cell(b'C', VGAColor::LightGreen, VGAColor::Magenta),
             );
 
-            c.putstr("Line 1Line 2Line 3Line 4Line 5");
+            c.origin = c.user_base + (2 * line_stride);
+            c.visible_origin = c.user_base + line_stride;
+            c.origin_end = c.origin + c.screen_size;
+            c.index = c.origin + (7 * core::mem::size_of::<u16>());
+            c.visual_mode = Mode::Visual;
+
+            c.blank();
+
+            assert_blank_state(&c);
+        }
+    }
+
+    mod cursor
+    {
+        #[test_case]
+        fn cursor_size_programs_cursor_shape_registers()
+        {
+            use super::super::MAX_SCANLINE_MASK;
+            use super::super::crtc;
+
+            let c = super::make_console();
+            let max_scanline = crtc::read(crtc::Register::MaximumScanLine) & MAX_SCANLINE_MASK;
+            let cursor_start_high = crtc::read(crtc::Register::CursorStart) & 0xc0;
+            let cursor_end_high = crtc::read(crtc::Register::CursorEnd) & 0xe0;
+            let end_scanline = max_scanline.min(5);
+            let start_scanline = end_scanline.min(2);
+
+            unsafe {
+                crtc::write(
+                    crtc::Register::CursorStart,
+                    cursor_start_high | 0x20 | max_scanline.min(7),
+                );
+                crtc::write(
+                    crtc::Register::CursorEnd,
+                    cursor_end_high | max_scanline.min(7),
+                );
+            }
+
+            c.cursor_size(start_scanline, end_scanline);
+
+            assert_eq!(
+                crtc::read(crtc::Register::CursorStart),
+                cursor_start_high | start_scanline
+            );
+            assert_eq!(
+                crtc::read(crtc::Register::CursorEnd),
+                cursor_end_high | end_scanline
+            );
+        }
+
+        #[test_case]
+        fn enable_cursor_clears_disable_bit()
+        {
+            use super::super::MAX_SCANLINE_MASK;
+            use super::super::crtc;
+
+            let mut c = super::make_console();
+            let max_scanline = crtc::read(crtc::Register::MaximumScanLine) & MAX_SCANLINE_MASK;
+            let cursor_start_high = crtc::read(crtc::Register::CursorStart) & 0xc0;
+
+            unsafe {
+                crtc::write(
+                    crtc::Register::CursorStart,
+                    cursor_start_high | 0x20 | max_scanline.min(5),
+                );
+            }
+            c.enable_cursor();
+
+            assert_eq!(
+                crtc::read(crtc::Register::CursorStart),
+                cursor_start_high | max_scanline.min(5)
+            );
+        }
+
+        #[test_case]
+        fn disable_cursor_sets_disable_bit()
+        {
+            use super::super::MAX_SCANLINE_MASK;
+            use super::super::crtc;
+
+            let mut c = super::make_console();
+            let max_scanline = crtc::read(crtc::Register::MaximumScanLine) & MAX_SCANLINE_MASK;
+            let cursor_start_high = crtc::read(crtc::Register::CursorStart) & 0xc0;
+
+            unsafe {
+                crtc::write(
+                    crtc::Register::CursorStart,
+                    cursor_start_high | max_scanline.min(5),
+                );
+            }
+            c.disable_cursor();
+
+            assert_eq!(
+                crtc::read(crtc::Register::CursorStart),
+                cursor_start_high | 0x20 | max_scanline.min(5)
+            );
+        }
+    }
+
+    mod status_line
+    {
+        #[test_case]
+        fn update_status_line_writes_text_and_colors_to_reserved_line()
+        {
+            use super::super::{Mode, VGAColor};
+            use super::{assert_status_line_text, make_console};
+
+            let mut c = make_console();
+
+            c.status_line_text_color = VGAColor::LightRed;
+            c.status_line_bg_color = VGAColor::Blue;
+            c.visual_mode = Mode::Visual;
+            c.update_status_line();
+
+            assert_status_line_text(
+                &c,
+                Mode::Visual.as_status_text(),
+                VGAColor::LightRed,
+                VGAColor::Blue,
+            );
+        }
+
+        #[test_case]
+        fn enable_status_line_programs_line_compare_registers()
+        {
+            use super::super::crtc;
+            use super::make_console;
+
+            let mut c = make_console();
+            let vertical_retrace_end = crtc::read(crtc::Register::VerticalRetraceEnd);
+
+            c.disable_status_line();
+            c.enable_status_line();
+
+            let line_compare = u16::from(crtc::read(crtc::Register::LineCompare))
+                | if (crtc::read(crtc::Register::Overflow) & 0x10) != 0 {
+                    0x0100
+                } else {
+                    0
+                }
+                | if (crtc::read(crtc::Register::MaximumScanLine) & 0x40) != 0 {
+                    0x0200
+                } else {
+                    0
+                };
+
+            assert!(c.status_line_enabled);
+            assert_eq!(line_compare, ((c.rows - 1) * c.scanlines_per_row()) as u16);
+            assert_eq!(
+                crtc::read(crtc::Register::VerticalRetraceEnd),
+                vertical_retrace_end
+            );
+        }
+
+        #[test_case]
+        fn disable_status_line_programs_line_compare_registers()
+        {
+            use super::super::crtc;
+            use super::make_console;
+
+            let mut c = make_console();
+            let vertical_retrace_end = crtc::read(crtc::Register::VerticalRetraceEnd);
+
+            c.disable_status_line();
+
+            let line_compare = u16::from(crtc::read(crtc::Register::LineCompare))
+                | if (crtc::read(crtc::Register::Overflow) & 0x10) != 0 {
+                    0x0100
+                } else {
+                    0
+                }
+                | if (crtc::read(crtc::Register::MaximumScanLine) & 0x40) != 0 {
+                    0x0200
+                } else {
+                    0
+                };
+
+            assert!(!c.status_line_enabled);
+            assert_eq!(line_compare, 0x03ff);
+            assert_eq!(
+                crtc::read(crtc::Register::VerticalRetraceEnd),
+                vertical_retrace_end
+            );
+        }
+    }
+
+    mod resize
+    {
+        #[test_case]
+        fn updates_console_state_and_crtc_registers()
+        {
+            use super::super::Mode;
+            use super::super::crtc;
+            use super::{assert_status_line_text, assert_user_region_blank, make_console};
+
+            let mut c = make_console();
+            let total_vram_size = c.vram_end - c.phys_base;
+            let vertical_retrace_end = crtc::read(crtc::Register::VerticalRetraceEnd);
+
+            c.putstr("resize me");
+            c.resize(40, 10);
+
+            let expected_line_stride = 40 * core::mem::size_of::<u16>();
+            let expected_user_base = c.phys_base + expected_line_stride;
+            let expected_vram_size = total_vram_size - expected_line_stride;
+            let expected_screen_size = 40 * 10 * core::mem::size_of::<u16>();
+            let expected_vertical_display_end = (10 * c.scanlines_per_row()) - 1;
+            let expected_overflow_bits = (if (expected_vertical_display_end & 0x100) != 0 {
+                0x02
+            } else {
+                0x00
+            }) | if (expected_vertical_display_end & 0x200) != 0 {
+                0x40
+            } else {
+                0x00
+            };
+
+            assert_eq!(c.cols, 40);
+            assert_eq!(c.rows, 10);
+            assert_eq!(c.user_base, expected_user_base);
+            assert_eq!(c.vram_size, expected_vram_size);
+            assert_eq!(c.screen_size, expected_screen_size);
+            assert_eq!(c.origin, expected_user_base);
+            assert_eq!(c.visible_origin, expected_user_base);
+            assert_eq!(c.index, expected_user_base);
+            assert_eq!(c.origin_end, expected_user_base + expected_screen_size);
+            assert_eq!(c.visual_mode, Mode::Terminal);
+            assert!(c.status_line_enabled);
+
+            let line_compare = u16::from(crtc::read(crtc::Register::LineCompare))
+                | if (crtc::read(crtc::Register::Overflow) & 0x10) != 0 {
+                    0x0100
+                } else {
+                    0
+                }
+                | if (crtc::read(crtc::Register::MaximumScanLine) & 0x40) != 0 {
+                    0x0200
+                } else {
+                    0
+                };
+            let start = (u16::from(crtc::read(crtc::Register::StartAddressHigh)) << 8)
+                | u16::from(crtc::read(crtc::Register::StartAddressLow));
+            let cursor = (u16::from(crtc::read(crtc::Register::CursorLocationHigh)) << 8)
+                | u16::from(crtc::read(crtc::Register::CursorLocationLow));
+
+            assert_eq!(crtc::read(crtc::Register::HorizontalDisplayEnd), 39);
+            assert_eq!(
+                crtc::read(crtc::Register::VerticalDisplayEnd),
+                (expected_vertical_display_end & 0xff) as u8
+            );
+            assert_eq!(crtc::read(crtc::Register::Offset), 20);
+            assert_eq!(
+                crtc::read(crtc::Register::Overflow) & 0x42,
+                expected_overflow_bits
+            );
+            assert_eq!(
+                crtc::read(crtc::Register::VerticalRetraceEnd),
+                vertical_retrace_end
+            );
+            assert_eq!(line_compare, ((c.rows - 1) * c.scanlines_per_row()) as u16);
+            assert_eq!(start, ((expected_user_base - c.phys_base) / 2) as u16);
+            assert_eq!(cursor, ((expected_user_base - c.phys_base) / 2) as u16);
+
+            assert_user_region_blank(&c);
+            assert_status_line_text(
+                &c,
+                Mode::Terminal.as_status_text(),
+                c.status_line_text_color,
+                c.status_line_bg_color,
+            );
         }
     }
 }

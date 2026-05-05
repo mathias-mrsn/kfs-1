@@ -99,5 +99,12 @@ pub extern "C" fn kernel_main(
     }
     print!("---");
 
-    loop {}
+    loop {
+        unsafe {
+            while crate::instructions::io::inb(0x64) & 0x1 == 0x0 {
+                let scanline = crate::instructions::io::inb(0x60);
+                print!("\rScanline: {scanline:3}");
+            }
+        }
+    }
 }
