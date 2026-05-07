@@ -1,14 +1,16 @@
 use core::fmt;
-use lazy_static::lazy_static;
-use spin::Mutex;
+use spin::{Mutex, Once};
 use vgac::VgaConsole;
 
 mod crtc;
 mod gfxc;
 mod vgac;
 
-lazy_static! {
-    static ref LOGGER: Mutex<VgaConsole> = Mutex::new(VgaConsole::new(
+static LOGGER: Once<Mutex<VgaConsole>> = Once::new();
+
+fn build_logger() -> Mutex<VgaConsole>
+{
+    Mutex::new(VgaConsole::new(
         vgac::VGAColor::White,
         vgac::VGAColor::Black,
         vgac::VGAColor::Black,
@@ -16,19 +18,26 @@ lazy_static! {
         vgac::Resolution::R80_25,
         vgac::MemoryRanges::Small,
         vgac::CursorType::Full,
-    ));
+    ))
 }
+
+pub(crate) fn initialize()
+{
+    let _ = LOGGER.call_once(build_logger);
+}
+
+fn logger() -> &'static Mutex<VgaConsole> { LOGGER.call_once(build_logger) }
 
 #[doc(hidden)]
 pub(crate) fn _print(args: fmt::Arguments)
 {
-    let mut logger = LOGGER.lock();
+    let mut logger = logger().lock();
     fmt::write(&mut *logger, args).ok();
 }
 
 pub(crate) fn _panic_print(args: fmt::Arguments)
 {
-    if let Some(mut logger) = LOGGER.try_lock() {
+    if let Some(mut logger) = LOGGER.get().and_then(|logger| logger.try_lock()) {
         fmt::write(&mut *logger, args).ok();
     }
 }
