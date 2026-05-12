@@ -207,6 +207,9 @@ dap.adapters["kfs-gdb"] = function(callback, config)
 				-- Let GDB keep unresolved breakpoints until symbols/target are ready.
 				"-ex",
 				"set breakpoint pending on",
+				-- Display debugger output in hexadecimal by default.
+				"-ex",
+				"set output-radix 16",
 				"-i",
 				"dap",
 			},
