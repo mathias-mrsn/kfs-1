@@ -7,36 +7,31 @@
 //!
 //! # Memory Layout
 //!
-//! phys_base ------> +---------------+-.
-//!                      |               |  \
-//!                      |               |   |
-//!                      |               |    > area 1
-//!                      |               |   |
-//!                      |               |  /
-//!                      +---------------+-:
-//!                      |               |  \
-//! user_base -------> | status line    |   |
-//! visible_origin > ^| $> ls         |   |
-//!                     || file          |    > area 2
-//!           rows     < | file2         |   |
-//!                     || $> cat file   |  /
-//! origin -----------> |+---------------+-:
-//!                     || Hello         |  \
-//!                     v| $> uname      |   |
-//!                      | Darwin        |    > area 3
-//! index -------------->|--------v      |   |
-//!                      | $> echo       |  /
-//! origin_end --------> +---------------+-'
-//!                      |<--- cols ----->|
-//!                      .               .
-//!                      .               .
-//!                      +---------------- <-- vram_end
-//!
+//! phys_base -------> +---------------+-.
+//!                    |               |  \
+//!                    |               |   |
+//!                    |               |   | area 1
+//!                    |               |   |
+//!                    |               |  /
+//!                    +---------------+-:
+//! user_base -------> | status line   |  \
+//! visible_origin --> | $> ls         |   |
+//!                    | file          |   | area 2
+//!                    | file2         |   |
+//!                    | $> cat file   |  /
+//! origin ----------> +---------------+-:
+//!                    | Hello         |  \
+//!                    | $> uname      |   |
+//!                    | Darwin        |   | area 3
+//! index -----------> | $> echo       |  /
+//! origin_end ------> +---------------+-'
+//!                    |<--- cols ---->|
+//!                    .               .
+//!                    .               .
+//!                    +---------------+ <--- vram_end
+use super::{crtc, gfxc};
 use core::fmt;
 use core::ptr;
-use core::slice;
-
-use super::{crtc, gfxc};
 
 /// Default 16-bit word for clearing VGA text mode memory.
 const BLANK: u16 = 0x0720;
@@ -213,8 +208,8 @@ pub(crate) struct VgaConsole
     index:                  usize,
     /// Total size of the scrollable VGA memory region in bytes.
     vram_size:              usize,
-    /// Size of visible screen area in bytes
-    screen_size:            usize,
+    /// Total size of the visible VGA window in bytes.
+    window_size:            usize,
     /// Current foreground color for text output
     foreground_color:       VGAColor,
     /// Current background color for text output
@@ -227,8 +222,6 @@ pub(crate) struct VgaConsole
     visible_origin:         usize,
     /// Starting address of the current text buffer
     origin:                 usize,
-    /// Ending address of the current text buffer
-    origin_end:             usize,
     /// Number of rows in the display
     rows:                   usize,
     /// Number of columns in the display
@@ -262,8 +255,8 @@ impl VgaConsole
         let user_base = phys_base + line_stride;
         vram_size -= line_stride;
 
-        let screen_size = cols * rows * core::mem::size_of::<u16>();
-        debug_assert!(screen_size <= vram_size);
+        let window_size = cols * rows * core::mem::size_of::<u16>();
+        debug_assert!(window_size <= vram_size);
 
         let misc = gfxc::read(gfxc::Register::Miscellaneous) & !0x0c;
         // SAFETY: The selected memory map value is valid for the GFXC Miscellaneous
@@ -281,14 +274,13 @@ impl VgaConsole
             vram_end: user_base + vram_size,
             index: user_base,
             vram_size,
-            screen_size,
+            window_size,
             foreground_color,
             background_color,
             status_line_text_color,
             status_line_bg_color,
             visible_origin: user_base,
             origin: user_base,
-            origin_end: user_base + screen_size,
             rows,
             cols,
             cursor_type: CursorType::None,
@@ -315,11 +307,151 @@ impl VgaConsole
     }
 
     #[inline(always)]
-    fn page_stride(&self) -> usize
+    fn text_window_size(&self) -> usize
     {
-        self.rows
+        let status_line_size = usize::from(self.status_line_enabled)
             .checked_mul(self.line_stride())
-            .expect("VGA Error: page stride overflow")
+            .expect("VGA Error: status line size overflow");
+
+        self.window_size
+            .checked_sub(status_line_size)
+            .expect("VGA Error: text window size underflow")
+    }
+
+    #[inline(always)]
+    fn origin_end(&self) -> usize
+    {
+        self.origin
+            .checked_add(self.text_window_size())
+            .expect("VGA invariant violated: user origin end overflow")
+    }
+
+    #[inline(always)]
+    fn page_stride(&self) -> usize { self.text_window_size() }
+
+    #[inline(always)]
+    fn blank_line_cells(&self) -> usize { self.line_stride() / VGA_CELL_SIZE }
+
+    #[inline(always)]
+    fn write_vram_word(
+        &mut self,
+        addr: usize,
+        value: u16,
+    )
+    {
+        // SAFETY: The caller maintains `addr` as a valid, 16-bit aligned VGA text
+        // cell address within the selected memory window.
+        unsafe {
+            ptr::write_volatile(addr as *mut u16, value);
+        }
+    }
+
+    #[inline(always)]
+    fn fill_vram_words(
+        &mut self,
+        start: usize,
+        word_count: usize,
+        value: u16,
+    )
+    {
+        for index in 0..word_count {
+            let addr = start
+                .checked_add(index * VGA_CELL_SIZE)
+                .expect("VGA invariant violated: VRAM fill address overflowed");
+            self.write_vram_word(addr, value);
+        }
+    }
+
+    /// Copies VGA text cells forward from `src` to `dst` using volatile
+    /// accesses.
+    ///
+    /// This behaves like a limited `memmove` for the specific overlap pattern
+    /// used by the console wrap path: `dst` must be at or below `src` so
+    /// that a forward copy preserves unread source cells.
+    fn copy_vram_words_forward(
+        &mut self,
+        src: usize,
+        dst: usize,
+        word_count: usize,
+    )
+    {
+        debug_assert!(
+            dst <= src,
+            "VGA invariant violated: forward copy requires dst <= src"
+        );
+
+        for index in 0..word_count {
+            let src_addr = src
+                .checked_add(index * VGA_CELL_SIZE)
+                .expect("VGA invariant violated: source copy address overflowed");
+            let dst_addr = dst
+                .checked_add(index * VGA_CELL_SIZE)
+                .expect("VGA invariant violated: destination copy address overflowed");
+
+            // SAFETY: The caller maintains valid VGA text cell ranges for both
+            // source and destination. Forward iteration is correct for the overlap
+            // pattern enforced above.
+            let value = unsafe { ptr::read_volatile(src_addr as *const u16) };
+            self.write_vram_word(dst_addr, value);
+        }
+    }
+
+    #[inline(always)]
+    fn blank_line(
+        &mut self,
+        line_start: usize,
+    )
+    {
+        self.fill_vram_words(line_start, self.blank_line_cells(), BLANK);
+    }
+
+    /// Makes `line_start` the last visible output row.
+    ///
+    /// The caller decides when the visible window should move. This helper only
+    /// applies the shared state transition once that decision has been made.
+    fn reveal_line_as_last_visible(
+        &mut self,
+        line_start: usize,
+    )
+    {
+        let line_stride = self.line_stride();
+        let visible_window_without_last_line = self
+            .text_window_size()
+            .checked_sub(line_stride)
+            .expect("VGA invariant violated: text window is smaller than one line");
+
+        self.origin = line_start
+            .checked_sub(visible_window_without_last_line)
+            .expect("VGA invariant violated: output window origin underflowed");
+        self.visible_origin = self.origin;
+        self.blank_line(line_start);
+        self.set_mem_start();
+        self.update_cursor_position();
+    }
+
+    /// Re-bases the current text window to the start of the VRAM buffer.
+    ///
+    /// The first visible line is dropped, the remaining text is copied back to
+    /// `user_base`, and the newly exposed last line is cleared.
+    fn wrap_text_window_to_start(&mut self)
+    {
+        let line_stride = self.line_stride();
+        let words_to_keep = self
+            .text_window_size()
+            .checked_sub(line_stride)
+            .expect("VGA invariant violated: text window is smaller than one line")
+            / VGA_CELL_SIZE;
+
+        self.copy_vram_words_forward(self.origin + line_stride, self.user_base, words_to_keep);
+
+        self.origin = self.user_base;
+        self.visible_origin = self.user_base;
+        self.blank_line(
+            self.user_base
+                .checked_add(words_to_keep * VGA_CELL_SIZE)
+                .expect("VGA invariant violated: wrapped blank line address overflowed"),
+        );
+        self.index = self.origin_end() - line_stride;
     }
 
     /// Returns the effective number of scanlines per text row.
@@ -368,8 +500,8 @@ impl VgaConsole
         let visible_offset_words = visible_offset_bytes / core::mem::size_of::<u16>();
         let max_start_words = self
             .vram_size
-            .checked_sub(self.screen_size)
-            .expect("VGA invariant violated: screen size is larger than VRAM")
+            .checked_sub(self.text_window_size())
+            .expect("VGA invariant violated: text window size is larger than VRAM")
             / core::mem::size_of::<u16>();
         if visible_offset_words > max_start_words {
             panic!("VGA Error: visible_origin is out of bounds");
@@ -386,16 +518,21 @@ impl VgaConsole
         }
     }
 
-    /// Computes the position of the beginning of the line where the index
-    /// is located.
+    /// Computes the beginning of the text line containing `pos`.
+    ///
+    /// # Panics
+    /// Panics if `pos` is below `user_base`.
     #[inline(always)]
     fn start_of_line(
-        &mut self,
-        mut pos: usize,
+        &self,
+        pos: usize,
     ) -> usize
     {
-        pos -= self.user_base;
-        pos - (pos % self.line_stride()) + self.user_base
+        let offset = pos
+            .checked_sub(self.user_base)
+            .expect("VGA invariant violated: line position is below user_base");
+
+        offset - (offset % self.line_stride()) + self.user_base
     }
 
     /// Writes a single character to the VGA text buffer using default
@@ -422,17 +559,29 @@ impl VgaConsole
         let fg_color = foreground.unwrap_or(self.foreground_color as u8) & 0xf;
         let word = (c as u16) | ((bg_color as u16) << 12) | ((fg_color as u16) << 8);
 
-        if self.index == self.origin_end {
-            // self.visual(VisualAction::AdvanceLines(1));
-            self.new_line();
-        }
+        assert!(
+            self.index < self.vram_end,
+            "VGA invariant violated: write index is out of bounds"
+        );
 
-        unsafe {
-            *(self.index as *mut u16) = word;
-        }
+        self.write_vram_word(self.index, word);
 
         self.index += core::mem::size_of::<u16>();
-        self.update_cursor_position();
+
+        if self.index < self.origin_end() {
+            self.update_cursor_position();
+            return;
+        }
+
+        if self.index >= self.vram_end {
+            self.wrap_text_window_to_start();
+            self.set_mem_start();
+            self.update_cursor_position();
+            return;
+        }
+
+        let current_line_start = self.start_of_line(self.index);
+        self.reveal_line_as_last_visible(current_line_start);
     }
 
     /// Writes a string to the VGA text buffer using default colors
@@ -455,7 +604,6 @@ impl VgaConsole
     {
         for byte in str.bytes() {
             match byte {
-                // b'\n' => self.scroll(ScrollDir::NewLine, None),
                 b'\n' => {
                     self.new_line();
                 }
@@ -467,8 +615,8 @@ impl VgaConsole
 
     /// Advances the cursor to the beginning of the next line.
     ///
-    /// If the cursor is already on the last visible row, the visible window is
-    /// scrolled down by one line. The newly exposed last line is cleared.
+    /// If the cursor moves past the visible text window, the visible memory
+    /// start is updated so that the new line becomes the last visible row.
     fn new_line(&mut self)
     {
         let line_stride = self.line_stride();
@@ -477,63 +625,21 @@ impl VgaConsole
             .checked_add(line_stride)
             .expect("VGA invariant violated: next line start overflowed");
 
-        if next_line_start < self.origin_end {
+        if next_line_start < self.origin_end() {
             self.index = next_line_start;
             self.update_cursor_position();
             return;
         }
 
-        if self
-            .origin_end
-            .checked_add(line_stride)
-            .is_some_and(|end| end <= self.vram_end)
-        {
-            self.origin += line_stride;
-            self.visible_origin = self.origin;
-            self.origin_end += line_stride;
-            self.index = next_line_start;
-
-            // SAFETY: `index` points to the beginning of the newly exposed last
-            // line, and `line_stride / size_of::<u16>()` is the number of text
-            // cells in that line.
-            unsafe {
-                let line = slice::from_raw_parts_mut(
-                    self.index as *mut u16,
-                    line_stride / core::mem::size_of::<u16>(),
-                );
-                line.fill(BLANK);
-            }
+        if next_line_start >= self.vram_end {
+            self.wrap_text_window_to_start();
             self.set_mem_start();
             self.update_cursor_position();
             return;
         }
 
-        let bytes_to_keep = self
-            .screen_size
-            .checked_sub(line_stride)
-            .expect("VGA invariant violated: screen is smaller than one line");
-
-        // SAFETY: Source and destination are valid VGA memory ranges, and `ptr::copy`
-        // correctly handles overlap.
-        unsafe {
-            ptr::copy(
-                (self.origin + line_stride) as *const u8,
-                self.user_base as *mut u8,
-                bytes_to_keep,
-            );
-            let last_line = slice::from_raw_parts_mut(
-                (self.user_base + bytes_to_keep) as *mut u16,
-                line_stride / core::mem::size_of::<u16>(),
-            );
-            last_line.fill(BLANK);
-        }
-
-        self.origin = self.user_base;
-        self.visible_origin = self.user_base;
-        self.origin_end = self.user_base + self.screen_size;
-        self.index = self.origin_end - line_stride;
-        self.set_mem_start();
-        self.update_cursor_position();
+        self.index = next_line_start;
+        self.reveal_line_as_last_visible(next_line_start);
     }
 
     /// Updates the visible VGA window according to a visual scrolling action.
@@ -599,9 +705,9 @@ impl VgaConsole
                 self.visual_mode = Mode::Terminal;
                 let current_line_start = self.start_of_line(self.index);
                 let visible_window_without_last_line = self
-                    .screen_size
+                    .text_window_size()
                     .checked_sub(line_stride)
-                    .expect("VGA invariant violated: screen size is smaller than one line");
+                    .expect("VGA invariant violated: text window size is smaller than one line");
                 current_line_start
                     .saturating_sub(visible_window_without_last_line)
                     .clamp(min_visible_origin, max_visible_origin)
@@ -627,17 +733,11 @@ impl VgaConsole
     {
         let vram_words = self.vram_size / core::mem::size_of::<u16>();
 
-        // SAFETY: `user_base` points to the selected VGA text buffer and
-        // `vram_words` is the number of 16-bit cells contained in that buffer.
-        unsafe {
-            let buffer = slice::from_raw_parts_mut(self.user_base as *mut u16, vram_words);
-            buffer.fill(BLANK);
-        }
+        self.fill_vram_words(self.user_base, vram_words, BLANK);
 
         self.origin = self.user_base;
         self.visible_origin = self.user_base;
         self.index = self.user_base;
-        self.origin_end = self.origin + self.screen_size;
         self.visual_mode = Mode::Terminal;
 
         self.update_status_line();
@@ -789,14 +889,14 @@ impl VgaConsole
         let vram_size = total_vram_size
             .checked_sub(line_stride)
             .expect("VGA Error: line stride is larger than VRAM size");
-        let screen_size = width
+        let window_size = width
             .checked_mul(height)
             .and_then(|cells| cells.checked_mul(core::mem::size_of::<u16>()))
-            .expect("VGA Error: screen size overflow");
+            .expect("VGA Error: window size overflow");
 
         assert!(
-            screen_size <= vram_size,
-            "VGA Error: screen size exceeds VRAM size"
+            window_size <= vram_size,
+            "VGA Error: window size exceeds VRAM size"
         );
 
         let mut vertical_display_end = height
@@ -846,12 +946,11 @@ impl VgaConsole
         self.rows = height;
         self.user_base = user_base;
         self.vram_size = vram_size;
-        self.screen_size = screen_size;
+        self.window_size = window_size;
 
         self.origin = user_base;
         self.visible_origin = user_base;
         self.index = user_base;
-        self.origin_end = user_base + screen_size;
         self.visual_mode = Mode::Terminal;
 
         if status_line_enabled {
@@ -963,17 +1062,16 @@ impl VgaConsole
         let bg = self.status_line_bg_color as u16;
         let blank = (' ' as u16) | (fg << 8) | (bg << 12);
 
-        let line = unsafe {
-            // SAFETY: `phys_base` points to the reserved physical status line.
-            slice::from_raw_parts_mut(self.phys_base as *mut u16, self.cols)
-        };
-
-        line.fill(blank);
+        self.fill_vram_words(self.phys_base, self.cols, blank);
 
         let left_len = left_text.len().min(self.cols);
 
         for (index, byte) in left_text.iter().take(left_len).enumerate() {
-            line[index] = (*byte as u16) | (fg << 8) | (bg << 12);
+            let addr = self
+                .phys_base
+                .checked_add(index * VGA_CELL_SIZE)
+                .expect("VGA invariant violated: status line write address overflowed");
+            self.write_vram_word(addr, (*byte as u16) | (fg << 8) | (bg << 12));
         }
     }
 }
@@ -1012,7 +1110,7 @@ mod tests
     {
         unsafe {
             // SAFETY: The test writes one 16-bit cell into the VGA text buffer.
-            *((ptr as *mut u16).add(index)) = value;
+            core::ptr::write_volatile((ptr as *mut u16).add(index), value);
         }
     }
 
@@ -1023,7 +1121,7 @@ mod tests
     {
         unsafe {
             // SAFETY: The test reads one 16-bit cell from the VGA text buffer.
-            *((ptr as *const u16).add(index))
+            core::ptr::read_volatile((ptr as *const u16).add(index))
         }
     }
 
@@ -1087,7 +1185,7 @@ mod tests
         #[test_case]
         fn write_basic_characters()
         {
-            use super::super::VGAColor;
+            use super::super::{VGAColor, BLANK};
             use super::{make_console, read_cell};
             use core::fmt::Write;
 
@@ -1096,6 +1194,7 @@ mod tests
                 let ch = char::from(b'0' + u8::try_from(i % 10).unwrap());
                 write!(c, "{ch}").unwrap();
             }
+
             assert_eq!(
                 read_cell(c.visible_origin, 0),
                 ('0' as u16) | ((VGAColor::White as u16) << 8)
@@ -1105,9 +1204,67 @@ mod tests
                 ('9' as u16) | ((VGAColor::White as u16) << 8)
             );
             assert_eq!(
-                read_cell(c.visible_origin, ((c.rows - 1) * c.cols) - 1),
-                ('9' as u16) | ((VGAColor::White as u16) << 8)
+                read_cell(c.visible_origin, (c.user_visible_rows() - 1) * c.cols),
+                ('0' as u16) | ((VGAColor::White as u16) << 8)
             );
+            assert_eq!(
+                read_cell(c.visible_origin, (c.user_visible_rows() * c.cols) - 1),
+                BLANK
+            );
+        }
+
+        #[test_case]
+        fn writing_past_last_visible_cell_reveals_next_buffer_line()
+        {
+            use super::super::{BLANK, VGA_CELL_SIZE};
+            use super::{make_console, read_cell, write_cell};
+
+            let mut c = make_console();
+            let line_stride = c.line_stride();
+            let old_origin = c.origin;
+            let old_origin_end = c.origin_end();
+            let last_cell = old_origin_end - VGA_CELL_SIZE;
+
+            write_cell(old_origin, 0, 'A' as u16);
+            write_cell(old_origin + line_stride, 0, 'B' as u16);
+            write_cell(old_origin_end, 0, 'Z' as u16);
+
+            c.index = last_cell;
+            c.cputc(b'X', None, None);
+
+            assert_eq!(c.origin, old_origin + line_stride);
+            assert_eq!(c.visible_origin, old_origin + line_stride);
+            assert_eq!(c.origin_end(), old_origin_end + line_stride);
+            assert_eq!(c.index, old_origin_end);
+            assert_eq!(read_cell(c.visible_origin, 0), 'B' as u16);
+            assert_eq!(read_cell(c.index, 0), BLANK);
+        }
+
+        #[test_case]
+        fn writing_at_end_of_vram_wraps_window_to_start()
+        {
+            use super::super::{BLANK, VGA_CELL_SIZE};
+            use super::{make_console, read_cell, write_cell};
+
+            let mut c = make_console();
+            let line_stride = c.line_stride();
+            let old_origin_end = c.origin_end();
+            let last_cell = old_origin_end - VGA_CELL_SIZE;
+
+            write_cell(c.user_base, 0, 'A' as u16);
+            write_cell(c.user_base + line_stride, 0, 'B' as u16);
+            write_cell(old_origin_end - line_stride, 0, 'Y' as u16);
+
+            c.vram_end = old_origin_end;
+            c.index = last_cell;
+            c.cputc(b'X', None, None);
+
+            assert_eq!(c.origin, c.user_base);
+            assert_eq!(c.visible_origin, c.user_base);
+            assert_eq!(c.origin_end(), c.user_base + c.text_window_size());
+            assert_eq!(c.index, c.origin_end() - line_stride);
+            assert_eq!(read_cell(c.visible_origin, 0), 'B' as u16);
+            assert_eq!(read_cell(c.index, 0), BLANK);
         }
     }
 
@@ -1119,7 +1276,7 @@ mod tests
             use super::super::VGA_CELL_SIZE;
             use super::make_console;
 
-            let mut c = make_console();
+            let c = make_console();
             let line_stride = c.line_stride();
             let target_line = 7;
             let line_start = c.user_base + (target_line * line_stride);
@@ -1181,7 +1338,7 @@ mod tests
                 let mut c = make_console();
                 let old_origin = c.origin;
                 let old_visible_origin = c.visible_origin;
-                let old_origin_end = c.origin_end;
+                let old_origin_end = c.origin_end();
 
                 c.index = c.user_base + offset;
                 c.new_line();
@@ -1189,7 +1346,7 @@ mod tests
                 assert_eq!(c.index, c.user_base + line_stride, "case: {case}");
                 assert_eq!(c.origin, old_origin, "case: {case}");
                 assert_eq!(c.visible_origin, old_visible_origin, "case: {case}");
-                assert_eq!(c.origin_end, old_origin_end, "case: {case}");
+                assert_eq!(c.origin_end(), old_origin_end, "case: {case}");
             }
         }
 
@@ -1208,7 +1365,7 @@ mod tests
             for (case, offset) in [("start", 0), ("middle", middle_offset), ("end", end_offset)] {
                 let mut c = make_console();
                 let old_origin = c.origin;
-                let old_origin_end = c.origin_end;
+                let old_origin_end = c.origin_end();
                 let last_row_start = old_origin_end - line_stride;
 
                 write_cell(old_origin, 0, 'A' as u16);
@@ -1220,7 +1377,7 @@ mod tests
 
                 assert_eq!(c.origin, old_origin + line_stride, "case: {case}");
                 assert_eq!(c.visible_origin, old_origin + line_stride, "case: {case}");
-                assert_eq!(c.origin_end, old_origin_end + line_stride, "case: {case}");
+                assert_eq!(c.origin_end(), old_origin_end + line_stride, "case: {case}");
                 assert_eq!(c.index, old_origin_end, "case: {case}");
                 assert_eq!(read_cell(c.visible_origin, 0), 'B' as u16, "case: {case}");
                 assert_eq!(read_cell(c.index, 0), BLANK, "case: {case}");
@@ -1241,7 +1398,7 @@ mod tests
 
             for (case, offset) in [("start", 0), ("middle", middle_offset), ("end", end_offset)] {
                 let mut c = make_console();
-                let old_origin_end = c.origin_end;
+                let old_origin_end = c.origin_end();
                 let last_row_start = old_origin_end - line_stride;
 
                 write_cell(c.user_base, 0, 'A' as u16);
@@ -1254,8 +1411,12 @@ mod tests
 
                 assert_eq!(c.origin, c.user_base, "case: {case}");
                 assert_eq!(c.visible_origin, c.user_base, "case: {case}");
-                assert_eq!(c.origin_end, c.user_base + c.screen_size, "case: {case}");
-                assert_eq!(c.index, c.origin_end - line_stride, "case: {case}");
+                assert_eq!(
+                    c.origin_end(),
+                    c.user_base + c.text_window_size(),
+                    "case: {case}"
+                );
+                assert_eq!(c.index, c.origin_end() - line_stride, "case: {case}");
                 assert_eq!(read_cell(c.visible_origin, 0), 'B' as u16, "case: {case}");
                 assert_eq!(read_cell(c.index, 0), BLANK, "case: {case}");
             }
@@ -1309,7 +1470,6 @@ mod tests
             }
 
             c.origin = origin;
-            c.origin_end = origin + c.screen_size;
             c.visible_origin = visible_origin;
 
             c.scroll_view(super::super::VisualAction::ViewLinesUp(2));
@@ -1348,7 +1508,6 @@ mod tests
             }
 
             c.origin = origin;
-            c.origin_end = origin + c.screen_size;
             c.visible_origin = visible_origin;
 
             c.scroll_view(super::super::VisualAction::ViewLinesDown(3));
@@ -1380,7 +1539,6 @@ mod tests
             }
 
             c.origin = origin;
-            c.origin_end = origin + c.screen_size;
             c.visible_origin = visible_origin;
 
             c.scroll_view(super::super::VisualAction::ViewPagesUp(1));
@@ -1412,15 +1570,14 @@ mod tests
             }
 
             c.origin = origin;
-            c.origin_end = origin + c.screen_size;
             c.visible_origin = visible_origin;
 
             c.scroll_view(super::super::VisualAction::ViewPagesDown(1));
 
-            assert_eq!(c.visible_origin, visible_origin + c.screen_size);
+            assert_eq!(c.visible_origin, visible_origin + c.text_window_size());
             assert_eq!(
                 read_cell(c.visible_origin, 0),
-                styled_cell(b'B', c.foreground_color, c.background_color)
+                styled_cell(b'A', c.foreground_color, c.background_color)
             );
         }
 
@@ -1444,7 +1601,6 @@ mod tests
             }
 
             c.origin = origin;
-            c.origin_end = origin + c.screen_size;
             c.visible_origin = visible_origin;
 
             c.scroll_view(super::super::VisualAction::ToTop);
@@ -1476,7 +1632,6 @@ mod tests
             }
 
             c.origin = origin;
-            c.origin_end = origin + c.screen_size;
             c.visible_origin = visible_origin;
 
             c.scroll_view(super::super::VisualAction::ToBottom);
@@ -1512,17 +1667,16 @@ mod tests
             }
 
             c.origin = origin;
-            c.origin_end = origin + c.screen_size;
             c.visible_origin = visible_origin;
             c.index = current_line_start + (3 * core::mem::size_of::<u16>());
 
             c.scroll_view(super::super::VisualAction::FollowOutput);
 
-            assert_eq!(c.visible_origin, c.user_base + (4 * line_stride));
+            assert_eq!(c.visible_origin, c.user_base + (5 * line_stride));
             assert_eq!(c.visual_mode, Mode::Terminal);
             assert_eq!(
                 read_cell(c.visible_origin, 0),
-                styled_cell(b'E', c.foreground_color, c.background_color)
+                styled_cell(b'F', c.foreground_color, c.background_color)
             );
             assert_status_line_text(
                 &c,
@@ -1537,14 +1691,14 @@ mod tests
     {
         fn assert_blank_state(c: &super::super::VgaConsole)
         {
-            use super::super::Mode;
             use super::super::crtc;
+            use super::super::Mode;
             use super::{assert_status_line_text, assert_user_region_blank};
 
             assert_eq!(c.origin, c.user_base);
             assert_eq!(c.visible_origin, c.user_base);
             assert_eq!(c.index, c.user_base);
-            assert_eq!(c.origin_end, c.user_base + c.screen_size);
+            assert_eq!(c.origin_end(), c.user_base + c.text_window_size());
             assert_eq!(c.visual_mode, Mode::Terminal);
             assert_user_region_blank(c);
 
@@ -1611,7 +1765,6 @@ mod tests
 
             c.origin = c.user_base + (2 * line_stride);
             c.visible_origin = c.user_base + line_stride;
-            c.origin_end = c.origin + c.screen_size;
             c.index = c.origin + (7 * core::mem::size_of::<u16>());
             c.visual_mode = Mode::Visual;
 
@@ -1626,8 +1779,8 @@ mod tests
         #[test_case]
         fn cursor_size_programs_cursor_shape_registers()
         {
-            use super::super::MAX_SCANLINE_MASK;
             use super::super::crtc;
+            use super::super::MAX_SCANLINE_MASK;
 
             let c = super::make_console();
             let max_scanline = crtc::read(crtc::Register::MaximumScanLine) & MAX_SCANLINE_MASK;
@@ -1662,8 +1815,8 @@ mod tests
         #[test_case]
         fn enable_cursor_clears_disable_bit()
         {
-            use super::super::MAX_SCANLINE_MASK;
             use super::super::crtc;
+            use super::super::MAX_SCANLINE_MASK;
 
             let mut c = super::make_console();
             let max_scanline = crtc::read(crtc::Register::MaximumScanLine) & MAX_SCANLINE_MASK;
@@ -1686,8 +1839,8 @@ mod tests
         #[test_case]
         fn disable_cursor_sets_disable_bit()
         {
-            use super::super::MAX_SCANLINE_MASK;
             use super::super::crtc;
+            use super::super::MAX_SCANLINE_MASK;
 
             let mut c = super::make_console();
             let max_scanline = crtc::read(crtc::Register::MaximumScanLine) & MAX_SCANLINE_MASK;
@@ -1800,8 +1953,8 @@ mod tests
         #[test_case]
         fn updates_console_state_and_crtc_registers()
         {
-            use super::super::Mode;
             use super::super::crtc;
+            use super::super::Mode;
             use super::{assert_status_line_text, assert_user_region_blank, make_console};
 
             let mut c = make_console();
@@ -1814,7 +1967,8 @@ mod tests
             let expected_line_stride = 40 * core::mem::size_of::<u16>();
             let expected_user_base = c.phys_base + expected_line_stride;
             let expected_vram_size = total_vram_size - expected_line_stride;
-            let expected_screen_size = 40 * 10 * core::mem::size_of::<u16>();
+            let expected_window_size = 40 * 10 * core::mem::size_of::<u16>();
+            let expected_text_window_size = expected_window_size - expected_line_stride;
             let expected_vertical_display_end = (10 * c.scanlines_per_row()) - 1;
             let expected_overflow_bits = (if (expected_vertical_display_end & 0x100) != 0 {
                 0x02
@@ -1830,11 +1984,14 @@ mod tests
             assert_eq!(c.rows, 10);
             assert_eq!(c.user_base, expected_user_base);
             assert_eq!(c.vram_size, expected_vram_size);
-            assert_eq!(c.screen_size, expected_screen_size);
+            assert_eq!(c.window_size, expected_window_size);
             assert_eq!(c.origin, expected_user_base);
             assert_eq!(c.visible_origin, expected_user_base);
             assert_eq!(c.index, expected_user_base);
-            assert_eq!(c.origin_end, expected_user_base + expected_screen_size);
+            assert_eq!(
+                c.origin_end(),
+                expected_user_base + expected_text_window_size
+            );
             assert_eq!(c.visual_mode, Mode::Terminal);
             assert!(c.status_line_enabled);
 

@@ -2,6 +2,8 @@ use core::fmt;
 use spin::{Mutex, Once};
 use vgac::VgaConsole;
 
+use crate::instructions::cpu;
+
 mod crtc;
 mod gfxc;
 mod vgac;
@@ -21,25 +23,33 @@ fn build_logger() -> Mutex<VgaConsole>
     ))
 }
 
-pub(crate) fn initialize()
-{
-    let _ = LOGGER.call_once(build_logger);
-}
+pub(crate) fn initialize() { let _ = LOGGER.call_once(build_logger); }
 
 fn logger() -> &'static Mutex<VgaConsole> { LOGGER.call_once(build_logger) }
+
+fn with_logger<R>(f: impl FnOnce(&mut VgaConsole) -> R) -> R
+{
+    cpu::without_interrupts(|| {
+        let mut logger = logger().lock();
+        f(&mut logger)
+    })
+}
 
 #[doc(hidden)]
 pub(crate) fn _print(args: fmt::Arguments)
 {
-    let mut logger = logger().lock();
-    fmt::write(&mut *logger, args).ok();
+    with_logger(|logger| {
+        fmt::write(logger, args).ok();
+    });
 }
 
 pub(crate) fn _panic_print(args: fmt::Arguments)
 {
-    if let Some(mut logger) = LOGGER.get().and_then(|logger| logger.try_lock()) {
-        fmt::write(&mut *logger, args).ok();
-    }
+    cpu::without_interrupts(|| {
+        if let Some(mut logger) = LOGGER.get().and_then(|logger| logger.try_lock()) {
+            fmt::write(&mut *logger, args).ok();
+        }
+    });
 }
 
 #[macro_export]
