@@ -90,20 +90,24 @@ pub extern "C" fn kernel_main(
         panic!("invalid magic number at ")
     }
 
+    crate::drivers::video::initialize();
+
     #[cfg(test)]
     kernel_maintest();
 
-    for i in 0..=27 {
-        let ch = char::from(b'0' + u8::try_from(i % 10).unwrap());
-        println!("---{ch}")
+    for i in 0..=(80 * 23) + 80 {
+        print!("{}", i % 10)
     }
-    print!("---");
 
-    loop {
-        unsafe {
-            while crate::instructions::io::inb(0x64) & 0x1 == 0x0 {
-                let scanline = crate::instructions::io::inb(0x60);
-                print!("\rScanline: {scanline:3}");
+    // for i in 0..=80 * 20 {
+    //     print!("{}", i % 10)
+    // }
+
+    unsafe {
+        loop {
+            if crate::instructions::io::inb(0x64) & 0x1 == 0x1 {
+                let scancode = crate::instructions::io::inb(0x60);
+                print!("{scancode:02x} ");
             }
         }
     }
